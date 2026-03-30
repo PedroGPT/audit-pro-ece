@@ -3,4 +3,6 @@ node_modules
 .DS_Store
 *.log
 pdf_log.txt
-logo.png
+# logo.png (Quitado para que se suba a Vercel y se use en los PDFs)
+
+.vercel

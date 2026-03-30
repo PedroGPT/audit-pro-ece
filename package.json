@@ -5,8 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js",
-    "build": "echo 'No build needed'"
+    "dev": "node server.js"
   },
   "dependencies": {
     "@sparticuz/chromium": "^132.0.0",
@@ -17,6 +16,6 @@
     "puppeteer-core": "^24.4.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": "20.x"
   }
 }

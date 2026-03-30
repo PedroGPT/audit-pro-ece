@@ -29,11 +29,18 @@ module.exports = async (req, res) => {
         // 1. Cargamos el logo local si existe (para integrarlo mediante Base64)
         let logoDataUri = '';
         try {
-            const logoPath = path.join(process.cwd(), 'logo.png');
-            if (fs.existsSync(logoPath)) {
-                const logoBuffer = fs.readFileSync(logoPath);
-                const base64 = logoBuffer.toString('base64');
-                logoDataUri = `data:image/png;base64,${base64}`;
+            const logoPaths = [
+                path.join(process.cwd(), 'logo.png'),
+                path.join(__dirname, '..', 'logo.png'),
+                path.join(__dirname, 'logo.png')
+            ];
+            for (const p of logoPaths) {
+                if (fs.existsSync(p)) {
+                    const logoBuffer = fs.readFileSync(p);
+                    const base64 = logoBuffer.toString('base64');
+                    logoDataUri = `data:image/png;base64,${base64}`;
+                    break;
+                }
             }
         } catch (e) {
             console.error("No se pudo cargar el logo local en la nube.");
@@ -48,7 +55,6 @@ module.exports = async (req, res) => {
 
         let fullHtml = finalHtml;
         if (!finalHtml.toLowerCase().includes('<html')) {
-            // Mantenemos los estilos EXACTOS que definiste en server.js
             fullHtml = `<!DOCTYPE html>
 <html>
 <head>
@@ -63,8 +69,13 @@ module.exports = async (req, res) => {
 </html>`;
         }
 
-        await page.setContent(fullHtml, { waitUntil: 'networkidle0', timeout: 30000 });
-        await page.evaluateHandle('document.fonts.ready');
+        // TIEMPOS ULTRA-AGRESIVOS PARA PLAN HOBBY (Límite 10s)
+        await page.setContent(fullHtml, { waitUntil: 'load', timeout: 8000 });
+        try {
+            await page.evaluateHandle('document.fonts.ready', { timeout: 1000 });
+        } catch (e) {
+            // Ignoramos timeout de fuentes para priorizar la generación del PDF
+        }
 
         // Generamos el PDF con el mismo formato A4
         const pdfBuffer = await page.pdf({

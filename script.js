@@ -24,9 +24,18 @@ const SUPABASE_URL = (typeof process !== 'undefined' && process.env && process.e
 const SUPABASE_KEY = (typeof process !== 'undefined' && process.env && process.env.SUPABASE_ANON_KEY) ? process.env.SUPABASE_ANON_KEY : 'sb_publishable__G6Fw6PRn8OSHwg7G3h25w_0Mq7ByRJ';
 let supabase = null;
 
-if (typeof supabasejs !== 'undefined' && SUPABASE_URL && SUPABASE_KEY) {
-    supabase = supabasejs.createClient(SUPABASE_URL, SUPABASE_KEY);
+// El CDN de @supabase/supabase-js@2 expone el objeto como window.supabase (no supabasejs)
+if (typeof window !== 'undefined' && window.supabase && window.supabase.createClient && SUPABASE_URL && SUPABASE_KEY) {
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     console.log("Supabase Cloud Client Initialized ✓");
+} else if (typeof window !== 'undefined' && SUPABASE_URL && SUPABASE_KEY) {
+    // Intentar inicialización diferida (el CDN puede no haber cargado aún)
+    setTimeout(() => {
+        if (window.supabase && window.supabase.createClient && !supabase) {
+            supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+            console.log("Supabase Cloud Client Initialized (delayed) ✓");
+        }
+    }, 500);
 }
 
 // BOE Constants for Calculations (Global Scope)
@@ -184,7 +193,7 @@ async function pickerCallback(data) {
                 const invoiceData = await parsePDF(file);
                 if (invoiceData) invoices.push(invoiceData);
             }
-            renderDashboard();
+            window.renderDashboard && window.renderDashboard();
         } catch (err) {
             console.error("Error downloading from Drive:", err);
             alert("Error al descargar archivos desde Drive.");
@@ -272,8 +281,8 @@ async function processFiles(files) {
                 saveToDatabase(passedInvoices);
             }
 
-            switchView('dashboard');
-            renderDashboard();
+            switchView('audit-view');
+            window.renderDashboard();
         } else {
             alert("No se pudo extraer información de ninguna factura.");
         }
@@ -3292,7 +3301,14 @@ async function generateRemotePDF(html, filename, btn, originalText) {
             body: JSON.stringify({ html, filename })
         });
 
-        if (!response.ok) throw new Error('Error al generar PDF en el servidor');
+        if (response.status === 504) {
+            throw new Error('TIMEOUT: El servidor tardó más de 10 segundos. (Límite del Plan Hobby de Vercel). Intenta generar informes más cortos.');
+        }
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || 'Error al generar el PDF en el servidor');
+        }
 
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
@@ -3305,7 +3321,7 @@ async function generateRemotePDF(html, filename, btn, originalText) {
         document.body.removeChild(a);
     } catch (error) {
         console.error("PDF Error:", error);
-        alert("Error al generar el PDF. Asegúrate de que el servidor esté activo.");
+        alert("⚠️ Hubo un problema al generar el PDF:\n\n" + error.message);
     } finally {
         if (btn) {
             btn.innerHTML = originalText;

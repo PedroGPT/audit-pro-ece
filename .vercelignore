@@ -1,0 +1,12 @@
+node_modules
+.env
+.git
+check_logo.txt
+logo_base64.txt
+pdf_log.txt
+test_logo.pdf
+test_pdf.js
+fix_logo.js
+package-lock.json
+server.js
+C:\Users\pedro\.gemini\antigravity
