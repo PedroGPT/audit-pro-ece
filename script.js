@@ -18,7 +18,7 @@ window.pendingPdfFiles = new Map(); // In-memory map of dropped PDF File objects
 let savedComparisons = [];
 
 // --- SUPABASE CLOUD SYNC ---
-// Cambiamos el nombre de la variable a 'supabaseClient' para evitar conflictos con el objeto global de la librería
+// Usamos únicamente supabaseClient para evitar el SyntaxError de duplicidad con la librería global
 const SUPABASE_URL = (typeof process !== 'undefined' && process.env && process.env.SUPABASE_URL) ? process.env.SUPABASE_URL : 'https://uxngxqyrqxtigrcdbliu.supabase.co';
 const SUPABASE_KEY = (typeof process !== 'undefined' && process.env && process.env.SUPABASE_ANON_KEY) ? process.env.SUPABASE_ANON_KEY : 'sb_publishable__G6Fw6PRn8OSHwg7G3h25w_0Mq7ByRJ';
 let supabaseClient = null;
@@ -28,7 +28,7 @@ if (typeof window !== 'undefined' && window.supabase && window.supabase.createCl
     supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     console.log("Supabase Cloud Client Initialized ✓");
 } else if (typeof window !== 'undefined' && SUPABASE_URL && SUPABASE_KEY) {
-    // Intentar inicialización diferida (el CDN puede no haber cargado aún)
+    // Intentar inicialización diferida si el CDN tarda en cargar
     setTimeout(() => {
         if (window.supabase && window.supabase.createClient && !supabaseClient) {
             supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -207,7 +207,7 @@ async function parsePDF(file) {
 }
 
 async function extractInvoiceDataWithAI(text, fileName) {
-    const prompt = `Extrae los datos de esta factura de luz española. Devuelve un JSON estricto... (PROMPT OMITIDO POR BREVEDAD)`;
+    const prompt = `Extrae los datos de esta factura de luz española. Devuelve un JSON estricto: { ... }`;
     try {
         const response = await fetch('/api/analyze', {
             method: 'POST',
@@ -217,7 +217,6 @@ async function extractInvoiceDataWithAI(text, fileName) {
         const data = await response.json();
         let inv = JSON.parse(data.choices[0].message.content.replace(/```json\n?|```/g, '').trim());
 
-        // Cálculos básicos de auditoría
         inv.consumption = (inv.consumptionItems || []).reduce((a, b) => a + b, 0);
         inv.totalCalculated = (inv.energyCost || 0) + (inv.powerCost || 0) + (inv.othersCost || 0);
         inv.fileName = fileName;
@@ -242,7 +241,6 @@ window.saveToDatabase = async function (newInvoices) {
         else currentDb.push(inv);
     });
 
-    // CLOUD SYNC: Usamos supabaseClient
     if (supabaseClient) {
         try {
             const { error } = await supabaseClient
@@ -280,7 +278,7 @@ window.deleteInvoice = async function (cups, period) {
     renderHistory();
 }
 
-// --- UI RENDERING (EJEMPLOS) ---
+// --- UI RENDERING ---
 window.renderDashboard = function () {
     const resultsTableBody = document.querySelector('#results-table tbody');
     if (!resultsTableBody) return;
@@ -315,7 +313,6 @@ function normalizeClientName(n) { return (n || 'N/D').toUpperCase().trim(); }
 
 // --- INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', () => {
-    // Intentar carga inicial de nube
     if (supabaseClient) {
         supabaseClient.from('invoices').select('*').then(({ data, error }) => {
             if (!error && data) {
@@ -325,7 +322,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Cargar LocalStorage
     const stored = localStorage.getItem('audit_pro_db');
     if (stored && dbInvoices.length === 0) {
         dbInvoices = JSON.parse(stored);
