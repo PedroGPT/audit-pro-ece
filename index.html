@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ECE Consultores - Auditoría de Facturas</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- PDF.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <!-- Google API -->
+    <script src="https://apis.google.com/js/api.js"></script>
+    <script src="https://accounts.google.com/gsi/client"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>ECE Consultores</h2>
+            </div>
+            <nav class="sidebar-nav">
+                <button class="nav-item active" data-view="audit-view">
+                    <span class="icon">📋</span> Subida de Facturas
+                </button>
+                <button class="nav-item" data-view="clients-view">
+                    <span class="icon">👥</span> Clientes
+                </button>
+                <button class="nav-item" data-view="history-view">
+                    <span class="icon">📁</span> Historial / DB
+                </button>
+                <button class="nav-item" data-view="compare-view">
+                    <span class="icon">⚖️</span> Comparativa
+                </button>
+                <button class="nav-item" data-view="settings-view">
+                    <span class="icon">🏢</span> Comercializadoras
+                </button>
+            </nav>
+            <div class="sidebar-footer">
+                <p>© 2026 ECE Consultores</p>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="main-header">
+                <div class="logo-area">
+                    <h1>Subida de Facturas</h1>
+                </div>
+                <p class="subtitle">Visor fiel de conceptos y costes de factura</p>
+            </header>
+
+            <!-- View: Auditoría (Current implementation) -->
+            <div id="audit-view" class="view">
+            <!-- Drag & Drop Zone -->
+            <section id="upload-section" class="upload-section">
+                <div id="drop-zone" class="drop-zone">
+                    <div class="icon">📄</div>
+                    <h3>Arrastra y suelta tus facturas PDF aquí</h3>
+                    <div class="actions-group">
+                        <button id="select-files-btn" class="btn primary">Seleccionar Archivos</button>
+                        <button id="gdrive-btn" class="btn gdrive">
+                            <img src="https://upload.wikimedia.org/wikipedia/commons/1/12/Google_Drive_icon_%282020%29.svg"
+                                alt="Drive" width="16" height="16">
+                            Google Drive
+                        </button>
+                    </div>
+                    <input type="file" id="file-input" multiple accept=".pdf" hidden>
+                </div>
+            </section>
+
+            <!-- Loading Indicator -->
+            <div id="loading" class="hidden">
+                <div class="spinner"></div>
+                <p>Procesando facturas...</p>
+            </div>
+
+            <!-- Dashboard (Hidden until processed) -->
+            <div id="dashboard" class="hidden">
+                <!-- Stats Cards -->
+                <section class="stats-grid">
+                    <div style="grid-column: 1 / -1; margin-bottom: 1rem; color: #64748b; font-weight: 500;"
+                        id="global-cups-display" class="hidden">
+                        CUPS: -
+                    </div>
+                    <div style="grid-column: 1 / -1; margin-bottom: 1rem; color: #64748b; font-weight: 500;"
+                        id="client-info-display" class="hidden">
+                        <!-- Client Info will be injected here -->
+                    </div>
+                    <div class="card stat-card">
+                        <h3>Consumo Real Total</h3>
+                        <div class="value" id="total-kwh">0 kWh</div>
+                    </div>
+                    <div class="card stat-card">
+                        <h3>Gasto Energía Real</h3>
+                        <div class="value" id="total-energy-cost">0,00 €</div>
+                        <div class="subtext">Energía + Mercado + Remuneración</div>
+                    </div>
+                    <div class="card stat-card highlight">
+                        <h3>Precio Medio Unitario</h3>
+                        <div class="value" id="avg-price">0,0000 €/kWh</div>
+                    </div>
+                    <div class="card stat-card">
+                        <h3>Potencia Total</h3>
+                        <div class="value" id="total-power-cost">0,00 €</div>
+                    </div>
+                </section>
+
+                <!-- Detailed Table -->
+                <section class="results-section">
+                    <div class="section-header">
+                        <h2>Datos de Facturas Cargadas</h2>
+                        <div class="action-buttons dashboard-actions-row">
+                            <div style="display: flex; align-items: center; gap: 0.5rem; background: #f8fafc; padding: 0.25rem 0.75rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                                <label for="dashboard-target-provider-select" style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); white-space: nowrap;">Oferta destino:</label>
+                                <select id="dashboard-target-provider-select" class="form-select" style="padding: 0.2rem 0.5rem; font-size: 0.8rem; border: none; background: transparent; cursor: pointer; min-width: 140px;">
+                                    <!-- Options injected via JS -->
+                                </select>
+                            </div>
+                            <button id="batch-compare-btn" class="btn primary" onclick="addSelectedToComparison()" style="display:none; background: #4f46e5;">⚖️ Comparar Selección (0)</button>
+                            <button id="export-btn" class="btn secondary">Exportar CSV</button>
+                            <input type="file" id="logo-input" accept="image/*" hidden>
+                            <button id="logo-btn" class="btn secondary">Subir Logo</button>
+                            <button id="pdf-btn" class="btn primary">Descargar PDF</button>
+                        </div>
+                    </div>
+                    <div class="table-container">
+                        <table id="results-table">
+                            <thead>
+                                <tr>
+                                    <th class="checkbox-cell"><input type="checkbox" id="select-all-checkbox" onclick="toggleAllInvoicesSelections(this.checked)"></th>
+                                    <th>Factura</th>
+                                    <th>Periodo</th>
+                                    <th>CUPS</th>
+                                    <th>Ubicación</th>
+                                    <th class="text-right">Consumo (kWh)</th>
+                                    <th class="text-right">Energía (€)</th>
+                                    <th class="text-right">Potencia (€)</th>
+                                    <th class="text-right">Otros + Imp (€)</th>
+                                    <th class="text-right">Total Factura (€)</th>
+                                    <th class="text-right">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Rows will be injected here -->
+                            </tbody>
+                            <tfoot>
+                                <tr class="total-row">
+                                    <td colspan="5">TOTALES</td>
+                                    <td class="text-right" id="table-total-kwh">0</td>
+                                    <td class="text-right" id="table-total-energy">0,00</td>
+                                    <td class="text-right" id="table-total-power">0,00</td>
+                                    <td class="text-right" id="table-total-others">0,00</td>
+                                    <td class="text-right" id="table-total-invoice">0,00</td>
+                                    <td></td>
+                                </tr>
+                            </tfoot>
+
+                        </table>
+                    </div>
+                </section>
+            </div> <!-- End of Dashboard -->
+
+
+        </div> <!-- End of Audit View -->
+        <!-- View: Clientes [NUEVA] -->
+        <div id="clients-view" class="view hidden">
+                <section class="results-section">
+                    <div class="section-header">
+                        <h2>Gestión de Clientes y Suministros</h2>
+                        <span class="badge secondary" id="clients-count-badge">0 Clientes</span>
+                    </div>
+                    <div id="clients-list" class="empty-state">
+                        <p>No hay clientes detectados en la base de datos.</p>
+                    </div>
+                </section>
+            </div>
+
+            <!-- View: Historial / DB -->
+            <div id="history-view" class="view hidden">
+                <section class="results-section">
+                    <div class="section-header" style="flex-direction: column; align-items: flex-start; gap: 1rem;">
+                        <div style="display:flex; justify-content: space-between; width: 100%; align-items:center;">
+                            <h2>Historial de Facturas (Base de Datos)</h2>
+                            <div style="display:flex; gap:0.5rem; align-items: center;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; background: #f8fafc; padding: 0.25rem 0.75rem; border-radius: 0.5rem; border: 1px solid var(--border-color);">
+                                    <label for="history-target-provider-select" style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); white-space: nowrap;">Oferta destino:</label>
+                                    <select id="history-target-provider-select" class="form-select" style="padding: 0.2rem 0.5rem; font-size: 0.8rem; border: none; background: transparent; cursor: pointer; min-width: 140px;">
+                                        <!-- Options injected via JS -->
+                                    </select>
+                                </div>
+                                <button id="batch-compare-history-btn" class="btn primary btn-sm" onclick="addSelectedToComparison('history')" style="display:none; background: #4f46e5;">⚖️ Comparar Selección (0)</button>
+                                <button id="download-history-pdf-btn" onclick="exportHistoryPDF()" class="btn primary btn-sm">📄 Descargar PDF</button>
+                                <button onclick="resetDatabaseWithConfirmation()" class="btn btn-sm" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;">🗑️ Borrar BD completa</button>
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:1rem; align-items:center; width: 100%; flex-wrap: wrap;">
+                            <select id="history-client-filter" class="form-select" onchange="updateCupsFilter(); renderHistory()" style="flex:1; min-width: 180px; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
+                                <option value="ALL">Todos los Clientes</option>
+                            </select>
+                            <select id="history-cups-filter" class="form-select" onchange="renderHistory()" style="flex:1; min-width: 180px; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
+                                <option value="ALL">Todos los CUPS</option>
+                            </select>
+                            <select id="history-tariff-filter" class="form-select" onchange="renderHistory()" style="flex:1; min-width: 150px; padding: 0.25rem 0.5rem; font-size: 0.875rem;">
+                                <option value="ALL">Todas las Tarifas</option>
+                                <option value="2.0">Tarifa 2.0</option>
+                                <option value="3.0">Tarifa 3.0</option>
+                                <option value="6.1">Tarifa 6.1</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="history-list" class="empty-state">
+                        <p>No hay facturas guardadas en la base de datos.</p>
+                    </div>
+                </section>
+            </div>
+
+            <!-- View: Comparativa -->
+            <div id="compare-view" class="view hidden">
+                <section class="results-section">
+                    <div class="section-header">
+                        <h2>Comparador de Ofertas</h2>
+                    </div>
+                    <div class="comparison-grid">
+                        <div class="card">
+                            <h3>Factura de Referencia</h3>
+                            <p id="ref-invoice-info">Selecciona una factura del historial...</p>
+                        </div>
+                        <div class="card">
+                            <h3>Comparar contra...</h3>
+                            <select id="target-provider-select" class="form-select">
+                                <!-- Options injected via JS -->
+                            </select>
+                        </div>
+                    </div>
+                    <div id="comparison-results" class="hidden">
+                        <!-- Comparison results will be injected here -->
+                    </div>
+                    
+                    <div id="saved-comparisons-section" style="margin-top: 3rem; padding-top: 2rem; border-top: 1px solid #e2e8f0;">
+                        <div class="section-header" style="justify-content: space-between; display: flex;">
+                            <h2 id="saved-comparisons-title">Reporte Consolidado Guardado</h2>
+                            <div>
+                                <button class="btn btn-sm" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5; margin-right: 0.5rem;" onclick="clearSavedComparisons()">Vaciar</button>
+                                <button id="download-saved-comparisons-btn" class="btn primary" onclick="generateSavedComparisonsPDF()" style="display: none;">Descargar PDF Multi-punto</button>
+                            </div>
+                        </div>
+                        <div id="saved-comparisons-list" class="empty-state">
+                            <p>No hay comparativas guardadas. Calcula una comparativa arriba y pulsa "Guardar Comparativa" para añadirla al reporte.</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- View: Settings / Pricing -->
+            <div id="settings-view" class="view hidden">
+                <section class="results-section">
+                    <div class="section-header">
+                        <h2>Comercializadoras y Tarifas de Mercado</h2>
+                        <button id="show-provider-form-btn" class="btn secondary">Nueva Comercializadora</button>
+                    </div>
+
+                    <!-- Add Provider Form (Hidden by default) -->
+                    <div id="new-provider-card" class="card hidden" style="margin: 1.5rem; border: 1px solid var(--accent-blue);">
+                        <h3>Alta de Nueva Oferta / Comercializadora</h3>
+                        <form id="provider-form" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; margin-top: 1rem;">
+                            <div style="grid-column: 1 / -1;">
+                                <label style="display: block; font-size: 0.8rem; color: var(--text-secondary);">Nombre de la Oferta</label>
+                                <input type="text" id="new-provider-name" placeholder="Ej: Iberdrola Plan Estable" required class="form-select" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 4px;">
+                                <small style="display:block; color:#64748b; margin-top:0.25rem;">Nota: Introduce el <strong>Margen Comercial</strong>. La app sumará los cargos y peajes regulados automáticamente.</small>
+                            </div>
+                            <div style="grid-column: 1 / -1;">
+                                <label style="display: block; font-size: 0.8rem; color: var(--text-secondary);">Tipo de Tarifa</label>
+                                <select id="new-tariff-type" class="form-select" style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 4px;" onchange="toggleFormPeriods()">
+                                    <option value="2.0">Tarifa 2.0 (3 Periodos)</option>
+                                    <option value="3.0">Tarifa 3.0 o 6.1 (6 Periodos)</option>
+                                </select>
+                            </div>
+                            
+                            <div style="grid-column: 1 / -1; margin-top: 0.5rem; border-top: 1px dashed #cbd5e1; padding-top: 0.5rem;">
+                                <label style="display: block; font-size: 0.8rem; font-weight: bold; color: var(--accent-blue);">Márgenes de Energía (€/kWh)</label>
+                            </div>
+                            <div><label style="display: block; font-size: 0.8rem;">P1 Energía</label><input type="number" step="any" id="new-p1" value="0.0000" class="form-select" style="width: 100%;"></div>
+                            <div><label style="display: block; font-size: 0.8rem;">P2 Energía</label><input type="number" step="any" id="new-p2" value="0.0000" class="form-select" style="width: 100%;"></div>
+                            <div><label style="display: block; font-size: 0.8rem;">P3 Energía</label><input type="number" step="any" id="new-p3" value="0.0000" class="form-select" style="width: 100%;"></div>
+                            <div><label style="display: block; font-size: 0.8rem;">P4 Energía</label><input type="number" step="any" id="new-p4" value="0.0000" class="form-select" style="width: 100%;"></div>
+                            <div><label style="display: block; font-size: 0.8rem;">P5 Energía</label><input type="number" step="any" id="new-p5" value="0.0000" class="form-select" style="width: 100%;"></div>
+                            <div><label style="display: block; font-size: 0.8rem;">P6 Energía</label><input type="number" step="any" id="new-p6" value="0.0000" class="form-select" style="width: 100%;"></div>
+                            <div style="grid-column: 1 / -1; margin-top: 0.5rem; border-top: 1px dashed #cbd5e1; padding-top: 0.5rem;">
+                                <label style="display: block; font-size: 0.8rem; font-weight: bold; color: #0f766e;">Márgenes de Potencia (€/kW·día)</label>
+                            </div>
+                            <div><label style="display: block; font-size: 0.8rem;">P1 Potencia</label><input type="number" step="any" id="new-pp1" value="0.0000" class="form-select" style="width: 100%;"></div>
+                            <div><label style="display: block; font-size: 0.8rem;">P2 Potencia</label><input type="number" step="any" id="new-pp2" value="0.0000" class="form-select" style="width: 100%;"></div>
+                            <div><label style="display: block; font-size: 0.8rem;">P3 Potencia</label><input type="number" step="any" id="new-pp3" value="0.0000" class="form-select" style="width: 100%;"></div>
+                            <div><label style="display: block; font-size: 0.8rem;">P4 Potencia</label><input type="number" step="any" id="new-pp4" value="0.0000" class="form-select" style="width: 100%;"></div>
+                            <div><label style="display: block; font-size: 0.8rem;">P5 Potencia</label><input type="number" step="any" id="new-pp5" value="0.0000" class="form-select" style="width: 100%;"></div>
+                            <div><label style="display: block; font-size: 0.8rem;">P6 Potencia</label><input type="number" step="any" id="new-pp6" value="0.0000" class="form-select" style="width: 100%;"></div>
+
+                            <div style="grid-column: 1 / -1; display: flex; gap: 1rem; justify-content: flex-end; margin-top: 0.5rem;">
+                                <button type="button" id="cancel-provider-btn" class="btn secondary">Cancelar</button>
+                                <button type="submit" class="btn primary">Guardar Comercializadora</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <div class="table-container">
+                        <table id="pricing-table">
+                            <thead>
+                                <tr>
+                                    <th rowspan="2">Comercializadora</th>
+                                    <th colspan="3" style="text-align: center; background: #f0f9ff;">Energía (P1-P3)</th>
+                                    <th colspan="3" style="text-align: center; background: #f0f9ff; color: #94a3b8;">Energía (P4-P6)</th>
+                                    <th colspan="2" style="text-align: center; background: #f0fdf4;">Potencia (P1-P2)</th>
+                                    <th rowspan="2">Acciones</th>
+                                </tr>
+                                <tr>
+                                    <th style="font-size: 0.75rem;">P1</th>
+                                    <th style="font-size: 0.75rem;">P2</th>
+                                    <th style="font-size: 0.75rem;">P3</th>
+                                    <th style="font-size: 0.75rem; color: #94a3b8;">P4</th>
+                                    <th style="font-size: 0.75rem; color: #94a3b8;">P5</th>
+                                    <th style="font-size: 0.75rem; color: #94a3b8;">P6</th>
+                                    <th style="font-size: 0.75rem;">P1</th>
+                                    <th style="font-size: 0.75rem;">P2</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Pricing rows -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Reset Database Section -->
+                    <div class="danger-zone" style="margin-top: 3rem; padding: 1.5rem; background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 12px; display: flex; align-items: center; justify-content: space-between;">
+                        <div>
+                            <h3 style="color: #ef4444; margin: 0 0 0.25rem 0;">Borrar Base de Datos</h3>
+                            <p style="color: #64748b; margin: 0; font-size: 0.9rem;">Se eliminarán permanentemente todas las facturas y datos de clientes guardados.</p>
+                        </div>
+                        <button id="reset-db-btn" class="btn btn-danger" style="background: #ef4444; color: white;" onclick="resetDatabaseWithConfirmation()">Borrar Todos los Datos</button>
+                    </div>
+                </section>
+            </div>
+
+
+
+        </main>
+    </div>
+
+    <!-- Comparison Details Modal -->
+    <div id="comparison-details-modal" class="modal hidden" style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 2rem;">
+        <div style="background: white; border-radius: 12px; width: 100%; max-width: 1400px; max-height: 90vh; overflow-y: auto; padding: 2rem; position: relative; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);">
+            <button onclick="document.getElementById('comparison-details-modal').classList.add('hidden')" style="position: absolute; top: 1rem; right: 1rem; background: #f1f5f9; border: none; font-size: 1.5rem; width: 36px; height: 36px; border-radius: 50%; cursor: pointer;">&times;</button>
+            <h2 id="modal-comp-title" style="margin-bottom: 1.5rem; color: #1e293b; font-size: 1.5rem;">Detalle de Suministro</h2>
+            <div id="modal-comp-content">
+                <!-- Detailed content goes here -->
+            </div>
+        </div>
+    </div>
+
+    <div id="pdf-capture-container" style="position: absolute; left: -9999px; top: 0; width: 210mm; background: white; pointer-events: none;"></div>
+
+    <script src="script.js?v=ece-pro-v1.0.1"></script>
+</body>
+</html>

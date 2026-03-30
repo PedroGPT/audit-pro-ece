@@ -1,0 +1,6 @@
+node_modules
+.env
+.DS_Store
+*.log
+pdf_log.txt
+logo.png
