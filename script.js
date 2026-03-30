@@ -19,9 +19,9 @@ window.pendingPdfFiles = new Map(); // In-memory map of dropped PDF File objects
 let savedComparisons = []; 
 
 // --- SUPABASE CLOUD SYNC ---
-// Estas variables se inyectarán automáticamente desde Vercel
-const SUPABASE_URL = (typeof process !== 'undefined' && process.env) ? process.env.SUPABASE_URL : '';
-const SUPABASE_KEY = (typeof process !== 'undefined' && process.env) ? process.env.SUPABASE_ANON_KEY : '';
+// Estas variables se inyectarán automáticamente desde Vercel o se usarán las del usuario
+const SUPABASE_URL = (typeof process !== 'undefined' && process.env && process.env.SUPABASE_URL) ? process.env.SUPABASE_URL : 'https://uxngxqyrqxtigrcdbliu.supabase.co';
+const SUPABASE_KEY = (typeof process !== 'undefined' && process.env && process.env.SUPABASE_ANON_KEY) ? process.env.SUPABASE_ANON_KEY : 'sb_publishable__G6Fw6PRn8OSHwg7G3h25w_0Mq7ByRJ';
 let supabase = null;
 
 if (typeof supabasejs !== 'undefined' && SUPABASE_URL && SUPABASE_KEY) {
