@@ -16,7 +16,18 @@ let dbInvoices = []; // Global Store for ALL invoices (Database)
 let pendingInvoices = []; // Global Store for anomalous invoices awaiting manual review (REMOVED logic)
 window.pendingPdfFiles = new Map(); // In-memory map of dropped PDF File objects for viewing
 
-let savedComparisons = []; // Global Store for Multi-Supply Saved Comparisons
+let savedComparisons = []; 
+
+// --- SUPABASE CLOUD SYNC ---
+// Estas variables se inyectarán automáticamente desde Vercel
+const SUPABASE_URL = (typeof process !== 'undefined' && process.env) ? process.env.SUPABASE_URL : '';
+const SUPABASE_KEY = (typeof process !== 'undefined' && process.env) ? process.env.SUPABASE_ANON_KEY : '';
+let supabase = null;
+
+if (typeof supabasejs !== 'undefined' && SUPABASE_URL && SUPABASE_KEY) {
+    supabase = supabasejs.createClient(SUPABASE_URL, SUPABASE_KEY);
+    console.log("Supabase Cloud Client Initialized ✓");
+}
 
 // BOE Constants for Calculations (Global Scope)
 const boePeajesExtPower = [0.063851, 0.003157, 0.002016, 0.001716, 0.001601, 0.001509];
@@ -1108,14 +1119,13 @@ window.renderDashboard = function() {
 }
 
 
-window.saveToDatabase = function(newInvoices) {
+window.saveToDatabase = async function(newInvoices) {
     const stored = localStorage.getItem('audit_pro_db');
     let currentDb = stored ? JSON.parse(stored) : [];
 
     newInvoices.forEach(inv => {
         if (inv.clientName) inv.clientName = normalizeClientName(inv.clientName);
         
-        // Match by invoice number (cleaned) OR by CUPS + exact period (same supply, same month)
         const invNumClean = (inv.invoiceNum || '').replace(/[^a-zA-Z0-9\-]/g, '').toLowerCase();
 
         const existingIdx = currentDb.findIndex(d => {
@@ -1126,13 +1136,30 @@ window.saveToDatabase = function(newInvoices) {
         });
 
         if (existingIdx >= 0) {
-            // Overwrite with updated extraction
             currentDb[existingIdx] = inv;
         } else {
             currentDb.push(inv);
         }
     });
 
+    // 🏆 CLOUD SYNC: Enviar a Supabase si está configurado
+    if (supabase) {
+        try {
+            // Guardamos cada factura en la tabla 'invoices' de Supabase
+            // Usamos upsert para manejar actualizaciones por número de factura o CUPS+Periodo
+            const { error } = await supabase
+                .from('invoices')
+                .upsert(newInvoices.map(inv => ({
+                    ...inv,
+                    last_updated: new Date().toISOString()
+                })));
+            
+            if (error) console.error("Supabase Sync Error:", error);
+            else console.log("Cloud Sync: Success ✓");
+        } catch (e) {
+            console.error("Cloud Connection failed, falling back to LocalStorage.");
+        }
+    }
 
     localStorage.setItem('audit_pro_db', JSON.stringify(currentDb));
     dbInvoices = currentDb;
@@ -1293,8 +1320,21 @@ window.renderHistory = function() {
     `;
 }
 
-window.deleteInvoice = function(cups, period) {
+window.deleteInvoice = async function(cups, period) {
     if (!confirm('¿Estás seguro de que deseas borrar esta factura del historial?')) return;
+    
+    // 🏆 CLOUD SYNC: Borrar de Supabase
+    if (supabase) {
+        try {
+            await supabase
+                .from('invoices')
+                .delete()
+                .match({ cups: cups, period: period });
+        } catch (e) {
+            console.error("Cloud deletion failed.");
+        }
+    }
+
     dbInvoices = dbInvoices.filter(inv => !(inv.cups === cups && inv.period === period));
     localStorage.setItem('audit_pro_db', JSON.stringify(dbInvoices));
     renderHistory();
@@ -2701,7 +2741,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const compareSelect = document.getElementById('target-provider-select');
     if (compareSelect) compareSelect.addEventListener('change', runComparison);
 
-    // 9. Navigation listeners
+    // 🏆 CLOUD SYNC: Carga inicial de datos desde Supabase
+    if (supabase) {
+        supabase.from('invoices').select('*').then(({ data, error }) => {
+            if (!error && data && data.length > 0) {
+                console.log("Cloud Initial Load: Success ✓");
+                // Fusionar con el local sin duplicar
+                const local = JSON.parse(localStorage.getItem('audit_pro_db') || '[]');
+                const combined = [...data];
+                local.forEach(l => {
+                    const exists = combined.some(c => c.invoiceNum === l.invoiceNum || (c.cups === l.cups && c.period === l.period));
+                    if (!exists) combined.push(l);
+                });
+                dbInvoices = combined;
+                renderHistory();
+                renderClients();
+            }
+        });
+    }
+
+    // Navigation listeners
     document.querySelectorAll('.nav-item').forEach(btn => {
         btn.addEventListener('click', () => {
             const viewId = btn.getAttribute('data-view');
