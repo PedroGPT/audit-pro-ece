@@ -15,7 +15,7 @@ async function loadSupabaseLibrary() {
         script.onload = () => {
             if (window.supabase && !supabaseClient) {
                 supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-                console.log("¡VERSIÓN ACTUALIZADA Y LIMPIA ✓!");
+                console.log("¡VERSIÓN ACTUALIZADA Y REAL ✓!");
             }
             resolve();
         };
@@ -28,31 +28,53 @@ function formatCurrency(a) {
     return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(a || 0);
 }
 
-// --- 3. PROCESAMIENTO DE ARCHIVOS (REVISADO) ---
+// --- 3. EXTRACCIÓN REAL CON IA ---
+async function extractWithAI(text, fileName) {
+    try {
+        const res = await fetch('/api/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: text })
+        });
+
+        if (!res.ok) throw new Error("Error en la respuesta de la API");
+
+        const data = await res.json();
+        // Limpiamos la respuesta por si la IA devuelve bloques de código markdown
+        let content = data.choices[0].message.content.replace(/```json\n?|```/g, '').trim();
+        let inv = JSON.parse(content);
+
+        inv.fileName = fileName;
+        return inv;
+    } catch (e) {
+        console.error("Error leyendo factura real:", e);
+        // Si falla la IA, devolvemos un objeto vacío para no romper la app
+        return {
+            invoiceNum: "ERROR LECTURA",
+            period: "Revisar API",
+            totalCalculated: 0,
+            clientName: fileName
+        };
+    }
+}
+
+// --- 4. PROCESAMIENTO DE ARCHIVOS ---
 async function processFiles(files) {
     const loadingEl = document.getElementById('loading');
     const dashboardEl = document.getElementById('dashboard');
 
     if (loadingEl) loadingEl.classList.remove('hidden');
-    console.log("Iniciando procesamiento...");
 
     invoices = [];
     for (const file of files) {
         try {
-            console.log("Leyendo:", file.name);
+            console.log("Analizando archivo real:", file.name);
             const text = await parsePDF(file);
-            console.log("Texto extraído, longitud:", text.length);
 
-            // SIMULACIÓN DE IA (Para evitar el bloqueo de carga)
-            // En el futuro, aquí llamarás a tu API real
-            const mockData = {
-                invoiceNum: "INV-" + Math.floor(Math.random() * 9000 + 1000),
-                period: "Procesado Correctamente",
-                totalCalculated: (Math.random() * 200 + 50).toFixed(2),
-                clientName: file.name
-            };
+            // AQUÍ LLAMAMOS A LA IA DE VERDAD
+            const data = await extractWithAI(text, file.name);
+            invoices.push(data);
 
-            invoices.push(mockData);
         } catch (e) {
             console.error("Error en " + file.name + ":", e);
         }
@@ -79,7 +101,7 @@ async function parsePDF(file) {
     return fullText;
 }
 
-// --- 4. PERSISTENCIA ---
+// --- 5. PERSISTENCIA ---
 async function saveToDatabase(newInvoices) {
     if (supabaseClient) {
         try {
@@ -88,20 +110,20 @@ async function saveToDatabase(newInvoices) {
     }
     const stored = localStorage.getItem('audit_pro_db');
     let currentDb = stored ? JSON.parse(stored) : [];
-    newInvoices.forEach(inv => currentDb.push(inv));
+    newInvoices.forEach(inv => currentDb.unshift(inv)); // Añadir al principio
     localStorage.setItem('audit_pro_db', JSON.stringify(currentDb));
     dbInvoices = currentDb;
     renderHistory();
 }
 
-// --- 5. RENDERIZADO UI ---
+// --- 6. RENDERIZADO UI ---
 function renderDashboard() {
     const tbody = document.querySelector('#results-table tbody');
     if (tbody) {
         tbody.innerHTML = invoices.map(inv => `
             <tr>
-                <td>${inv.invoiceNum}</td>
-                <td>${inv.period}</td>
+                <td>${inv.invoiceNum || 'N/A'}</td>
+                <td>${inv.period || 'N/A'}</td>
                 <td class="text-right">${formatCurrency(inv.totalCalculated)}</td>
             </tr>`).join('');
     }
@@ -112,12 +134,12 @@ function renderHistory() {
     if (div) {
         div.innerHTML = dbInvoices.map(inv => `
             <div class="card" style="margin-bottom:0.5rem; padding:1rem; background:white; border-radius:8px; border:1px solid #e2e8f0; color: black;">
-                <strong>${inv.clientName}</strong> - ${formatCurrency(inv.totalCalculated)}
+                <strong>${inv.clientName || inv.fileName}</strong> - ${formatCurrency(inv.totalCalculated)}
             </div>`).join('');
     }
 }
 
-// --- 6. ARRANQUE ---
+// --- 7. ARRANQUE ---
 document.addEventListener('DOMContentLoaded', async () => {
     await loadSupabaseLibrary();
 
