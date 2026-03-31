@@ -1,13 +1,18 @@
-export default async function handler(req, res) {
-    // Si la petición no es POST, devolvemos error
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+
+module.exports = async (req, res) => {
+    // Manejo de CORS y Método
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+
     if (req.method !== 'POST') {
         return res.status(405).json({ error: "Método no permitido" });
     }
 
     const API_KEY = process.env.OPENAI_API_KEY;
-
     if (!API_KEY) {
-        return res.status(500).json({ error: "No se encontró la API KEY en Vercel" });
+        return res.status(500).json({ error: "Falta API KEY en Vercel" });
     }
 
     try {
@@ -22,10 +27,7 @@ export default async function handler(req, res) {
             body: JSON.stringify({
                 model: "gpt-4o-mini",
                 messages: [
-                    {
-                        role: "system",
-                        content: "Eres un extractor de datos. Responde SOLO con un objeto JSON: {invoiceNum, period, totalCalculated, clientName}"
-                    },
+                    { role: "system", content: "Eres un extractor de facturas. Responde SOLO JSON: {invoiceNum, period, totalCalculated, clientName}" },
                     { role: "user", content: prompt }
                 ],
                 response_format: { type: "json_object" }
@@ -33,9 +35,8 @@ export default async function handler(req, res) {
         });
 
         const data = await response.json();
-        return res.status(200).json(data);
-
+        res.status(200).json(data);
     } catch (error) {
-        return res.status(500).json({ error: error.message });
+        res.status(500).json({ error: error.message });
     }
-}
+};
