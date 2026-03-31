@@ -11,7 +11,8 @@ async function loadSupabaseLibrary() {
         script.onload = () => {
             if (window.supabase && !supabaseClient) {
                 supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-                console.log("Supabase inicializado correctamente ✓");
+                // CAMBIO DE PRUEBA DE VIDA:
+                console.log("¡VERSIÓN ACTUALIZADA Y LIMPIA ✓!");
             }
             resolve();
         };
@@ -49,17 +50,22 @@ window.saveToDatabase = async function (newInvoices) {
 }
 
 async function processFiles(files) {
-    document.getElementById('loading').classList.remove('hidden');
+    const loadingEl = document.getElementById('loading');
+    if (loadingEl) loadingEl.classList.remove('hidden');
+
     invoices = [];
     for (const file of files) {
         const text = await parsePDF(file);
         const data = await extractWithAI(text, file.name);
         if (data) invoices.push(data);
     }
-    document.getElementById('loading').classList.add('hidden');
+
+    if (loadingEl) loadingEl.classList.add('hidden');
+
     if (invoices.length > 0) {
         await saveToDatabase(invoices);
-        document.getElementById('dashboard').classList.remove('hidden');
+        const dashboardEl = document.getElementById('dashboard');
+        if (dashboardEl) dashboardEl.classList.remove('hidden');
         renderDashboard();
     }
 }
