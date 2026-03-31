@@ -1,242 +1,155 @@
 // --- CONFIGURACIÓN GLOBAL ---
-const SUPABASE_URL = 'https://uxngxqyrqxtigrcdbliu.supabase.co';
-const SUPABASE_KEY = 'sb_publishable__G6Fw6PRn8OSHwg7G3h25w_0Mq7ByRJ';
+const DEVELOPER_KEY = 'AIzaSyACZ4t052cFJU_Nw1rJ0c5w-MjOkQ538n8';
+const CLIENT_ID = '401814876123-0h2kp6oj36p1oiugodc8vgacohmf8ibo.apps.googleusercontent.com';
+const APP_ID = '401814876123';
+const SCOPES = 'https://www.googleapis.com/auth/drive.readonly';
 
-let supabaseClient = null;
+let tokenClient;
+let gapiInited = false;
+let gisInited = false;
 let invoices = [];
 let dbInvoices = [];
+window.pendingPdfFiles = new Map();
 
-// --- 1. CARGA SEGURA DE SUPABASE ---
-async function loadSupabaseLibrary() {
-    if (window.supabase) return;
-    return new Promise((resolve) => {
-        const script = document.createElement('script');
-        script.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
-        script.onload = () => {
-            if (window.supabase && !supabaseClient) {
-                supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-                console.log("¡Motor Supabase Conectado!");
-            }
-            resolve();
-        };
-        document.head.appendChild(script);
+// --- SUPABASE CLOUD SYNC ---
+const SUPABASE_URL = 'https://uxngxqyrqxtigrcdbliu.supabase.co';
+const SUPABASE_KEY = 'sb_publishable__G6Fw6PRn8OSHwg7G3h25w_0Mq7ByRJ';
+let supabaseClient = null;
+
+if (typeof window !== 'undefined' && window.supabase) {
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+}
+
+// BOE Constants (Manteniendo tu lógica original)
+const boePeajesExtPower = [0.063851, 0.003157, 0.002016, 0.001716, 0.001601, 0.001509];
+const boeCargosExtPower = [0.004124, 0.000431, 0.000287, 0.000227, 0.000192, 0.000183];
+
+// Market Prices
+const DEFAULT_MARKET_PRICES = {
+    "fenie": { name: "Fenie Energía", p1: 0, p2: 0, p3: 0, p4: 0, p5: 0, p6: 0, pp1: 0, pp2: 0, pp3: 0, pp4: 0, pp5: 0, pp6: 0 },
+    "repsol": { name: "Repsol", p1: 0.138, p2: 0.115, p3: 0.105, p4: 0, p5: 0, p6: 0, pp1: 0.038, pp2: 0.005, pp3: 0, pp4: 0, pp5: 0, pp6: 0 },
+    "iberdrola": { name: "Iberdrola", p1: 0.150, p2: 0.130, p3: 0.120, p4: 0, p5: 0, p6: 0, pp1: 0.040, pp2: 0.006, pp3: 0, pp4: 0, pp5: 0, pp6: 0 }
+};
+let MARKET_PRICES = { ...DEFAULT_MARKET_PRICES };
+
+// --- NAVEGACIÓN ---
+function switchView(viewId) {
+    document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
+    const target = document.getElementById(viewId);
+    if (target) target.classList.remove('hidden');
+    document.querySelectorAll('.nav-item').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-view') === viewId);
     });
 }
 
-// --- 2. UTILIDADES ---
-function formatCurrency(a) {
-    return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(a || 0);
-}
-
-// --- 3. EXTRACCIÓN REAL CON IA ---
-async function extractWithAI(text, fileName) {
+// --- EXTRACCIÓN CON IA (CORREGIDA PARA VERCEL) ---
+async function extractInvoiceDataWithAI(text, fileName) {
     try {
-        const res = await fetch('/api/analyze', {
+        const response = await fetch('/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: text })
+            body: JSON.stringify({ prompt: text }) // Simplificado para la nueva API
         });
 
-        const data = await res.json();
+        const data = await response.json();
 
-        if (!res.ok) {
-            const errorMsg = data.error || "Error en la API";
-            console.error("Error API:", errorMsg);
-            throw new Error(errorMsg);
-        }
-
-        // Si la respuesta viene como objeto directo de OpenAI (choices...)
+        // Manejo de respuesta de OpenAI
         let rawContent = data.choices ? data.choices[0].message.content : data;
-
-        // Limpiamos posibles etiquetas markdown si la IA las pone
-        let cleanJson = typeof rawContent === 'string'
-            ? rawContent.replace(/```json\n?|```/g, '').trim()
+        let inv = typeof rawContent === 'string'
+            ? JSON.parse(rawContent.replace(/```json\n?|```/g, '').trim())
             : rawContent;
 
-        let inv = typeof cleanJson === 'object' ? cleanJson : JSON.parse(cleanJson);
+        // Cálculos automáticos de tu lógica original
+        inv.consumption = (inv.consumptionItems || []).reduce((a, b) => a + (parseFloat(b) || 0), 0);
+        inv.totalCalculated = (parseFloat(inv.energyCost) || 0) + (parseFloat(inv.powerCost) || 0) + (parseFloat(inv.othersCost) || 0);
+        inv.fileName = fileName;
+        inv._auditStatus = 'OK';
 
-        // Aseguramos que los nombres de los campos coincidan con tu UI
-        return {
-            invoiceNum: inv.invoiceNum || "S/N",
-            period: inv.period || "Desconocido",
-            totalCalculated: parseFloat(inv.totalCalculated) || 0,
-            clientName: inv.clientName || fileName,
-            totalKwh: inv.totalKwh || Math.floor(Math.random() * 500) + 100, // Simulación si no viene
-            avgPrice: inv.avgPrice || (0.15 + Math.random() * 0.05).toFixed(4),
-            fileName: fileName
-        };
+        return inv;
     } catch (e) {
-        console.error("Fallo lectura IA:", e);
-        return {
-            invoiceNum: "ERROR",
-            period: "Revisar PDF",
-            totalCalculated: 0,
-            clientName: fileName,
-            totalKwh: 0,
-            avgPrice: 0,
-            fileName: fileName
-        };
+        console.error("Error IA:", e);
+        return null;
     }
 }
 
-// --- 4. PROCESAMIENTO DE ARCHIVOS ---
+// --- PROCESAMIENTO DE ARCHIVOS ---
 async function processFiles(files) {
-    const loadingEl = document.getElementById('loading');
-    const dashboardEl = document.getElementById('dashboard');
-
-    if (loadingEl) loadingEl.classList.remove('hidden');
-    if (dashboardEl) dashboardEl.classList.add('hidden');
+    const loadingIndicator = document.getElementById('loading');
+    const dashboard = document.getElementById('dashboard');
+    if (loadingIndicator) loadingIndicator.classList.remove('hidden');
 
     invoices = [];
     for (const file of files) {
-        try {
-            const text = await parsePDF(file);
-            const data = await extractWithAI(text, file.name);
-            if (data) invoices.push(data);
-        } catch (e) {
-            console.error("Error procesando:", file.name, e);
+        window.pendingPdfFiles.set(file.name, file); // Para el visor de papel
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let fullText = "";
+        for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const textContent = await page.getTextContent();
+            fullText += textContent.items.map(item => item.str).join(" ") + "\n";
         }
+        const data = await extractInvoiceDataWithAI(fullText, file.name);
+        if (data) invoices.push(data);
     }
-
-    if (loadingEl) loadingEl.classList.add('hidden');
 
     if (invoices.length > 0) {
-        await saveToDatabase(invoices);
-        if (dashboardEl) dashboardEl.classList.remove('hidden');
+        saveToDatabase(invoices);
+        switchView('audit-view');
         renderDashboard();
     }
+    if (loadingIndicator) loadingIndicator.classList.add('hidden');
+    if (dashboard) dashboard.classList.remove('hidden');
 }
 
-async function parsePDF(file) {
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    let fullText = "";
-    for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const content = await page.getTextContent();
-        fullText += content.items.map(item => item.str).join(" ") + "\n";
-    }
-    return fullText;
-}
-
-// --- 5. PERSISTENCIA ---
-async function saveToDatabase(newInvoices) {
-    if (supabaseClient) {
-        try {
-            await supabaseClient.from('invoices').upsert(newInvoices);
-        } catch (e) { console.error("Error Supabase:", e); }
-    }
-    const stored = localStorage.getItem('audit_pro_db');
-    let currentDb = stored ? JSON.parse(stored) : [];
-
-    newInvoices.forEach(inv => {
-        // Evitar duplicados simples por número de factura
-        if (!currentDb.find(x => x.invoiceNum === inv.invoiceNum)) {
-            currentDb.unshift(inv);
-        }
-    });
-
-    localStorage.setItem('audit_pro_db', JSON.stringify(currentDb));
-    dbInvoices = currentDb;
-    renderHistory();
-}
-
-// --- 6. RENDERIZADO UI (RECUPERANDO TU DISEÑO) ---
+// --- RENDERIZADO (RECUPERANDO TU TABLA Y BOTONES) ---
 function renderDashboard() {
-    // 1. Rellenar las tarjetas superiores
-    const lastInv = invoices[0];
-    if (lastInv) {
-        document.getElementById('total-kwh').innerText = `${lastInv.totalKwh} kWh`;
-        document.getElementById('avg-price').innerText = `${lastInv.avgPrice} €/kWh`;
+    // Actualizar Tarjetas (Stats Grid)
+    if (invoices.length > 0) {
+        const last = invoices[0];
+        document.getElementById('total-kwh').innerText = `${last.consumption.toFixed(0)} kWh`;
+        document.getElementById('avg-price').innerText = `${(last.totalCalculated / (last.consumption || 1)).toFixed(4)} €/kWh`;
     }
 
-    // 2. Rellenar la tabla principal
     const tbody = document.querySelector('#results-table tbody');
-    if (tbody) {
-        tbody.innerHTML = invoices.map(inv => `
-            <tr>
-                <td>
-                    <div class="file-info">
-                        <span class="file-icon">📄</span>
-                        <div>
-                            <strong>${inv.invoiceNum}</strong><br>
-                            <small>${inv.clientName}</small>
-                        </div>
-                    </div>
-                </td>
-                <td>${inv.period}</td>
-                <td class="text-right"><strong>${formatCurrency(inv.totalCalculated)}</strong></td>
-            </tr>`).join('');
-    }
+    if (!tbody) return;
+    tbody.innerHTML = invoices.map((inv) => `
+        <tr>
+            <td>
+                <strong>${inv.invoiceNum || 'S/N'}</strong><br>
+                <small>${inv.clientName || inv.fileName}</small>
+            </td>
+            <td>${inv.period || 'N/D'}</td>
+            <td class="text-right">${formatCurrency(inv.totalCalculated)}</td>
+            <td class="text-right">
+                 <button class="btn primary btn-sm" onclick="switchView('compare-view')">Ver Comparativa</button>
+            </td>
+        </tr>
+    `).join('');
 }
 
-function renderHistory() {
-    const div = document.getElementById('history-list');
-    if (div) {
-        div.innerHTML = dbInvoices.map(inv => `
-            <div class="card history-card" style="margin-bottom:1rem; padding:1.2rem; background:white; border-radius:12px; border:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; color: #1e293b;">
-                <div>
-                    <h4 style="margin:0; color:#2563eb;">${inv.clientName}</h4>
-                    <small style="color:#64748b;">Fac: ${inv.invoiceNum} | Período: ${inv.period}</small>
-                </div>
-                <div style="text-align:right">
-                    <span style="font-weight:bold; font-size:1.1rem;">${formatCurrency(inv.totalCalculated)}</span>
-                </div>
-            </div>`).join('');
-    }
-}
+// --- UTILIDADES ---
+function formatCurrency(a) { return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(a || 0); }
 
-// --- 7. NAVEGACIÓN Y ARRANQUE ---
-document.addEventListener('DOMContentLoaded', async () => {
-    await loadSupabaseLibrary();
-
-    // Cargar historial inicial
-    const stored = localStorage.getItem('audit_pro_db');
-    if (stored) {
-        dbInvoices = JSON.parse(stored);
-        renderHistory();
-    }
-
-    // Lógica de pestañas del Sidebar
+// --- INICIALIZACIÓN ---
+document.addEventListener('DOMContentLoaded', () => {
+    // Botones de navegación
     document.querySelectorAll('.nav-item').forEach(btn => {
-        btn.onclick = () => {
-            const viewId = btn.getAttribute('data-view');
-
-            // Ocultar todas las vistas
-            document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
-
-            // Mostrar la seleccionada
-            const targetView = document.getElementById(viewId);
-            if (targetView) targetView.classList.remove('hidden');
-
-            // Actualizar estilo del botón
-            document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-
-            // Actualizar el título del Header según la vista
-            const headerTitle = document.querySelector('.main-header h1');
-            headerTitle.innerText = btn.innerText.split(' ').slice(1).join(' ');
-        };
+        btn.onclick = () => switchView(btn.getAttribute('data-view'));
     });
 
-    // Gestión de archivos
+    // Inputs de archivos
     const fileInput = document.getElementById('file-input');
     const selectBtn = document.getElementById('select-files-btn');
-    const dropZone = document.getElementById('drop-zone');
-
     if (selectBtn && fileInput) {
         selectBtn.onclick = () => fileInput.click();
         fileInput.onchange = (e) => processFiles(e.target.files);
     }
 
-    // Drag and Drop funcional
-    if (dropZone) {
-        dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('dragging'); };
-        dropZone.ondragleave = () => dropZone.classList.remove('dragging');
-        dropZone.ondrop = (e) => {
-            e.preventDefault();
-            dropZone.classList.remove('dragging');
-            processFiles(e.dataTransfer.files);
-        };
+    // Cargar Historial
+    const stored = localStorage.getItem('audit_pro_db');
+    if (stored) {
+        dbInvoices = JSON.parse(stored);
+        // Aquí podrías llamar a renderHistory() si existe
     }
 });
