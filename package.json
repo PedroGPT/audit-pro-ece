@@ -1,6 +1,5 @@
 {
-  "name": "audit-pro-ece",
-  "version": "1.0.1",
+  "private": true,
   "dependencies": {
     "cors": "^2.8.5",
     "node-fetch": "^2.7.0"
