@@ -1,14 +1,31 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
-  "functions": {
-    "api/generate-pdf.js": {
-      "memory": 2048,
-      "maxDuration": 10,
-      "includeFiles": "logo.png"
+  "builds": [
+    {
+      "src": "api/*.js",
+      "use": "@vercel/node"
     },
-    "api/*.js": {
-      "maxDuration": 10
+    {
+      "src": "*.html",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "*.css",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "*.js",
+      "use": "@vercel/static"
     }
-  }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/$1"
+    }
+  ]
 }
