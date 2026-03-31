@@ -28,7 +28,7 @@ function formatCurrency(a) {
     return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(a || 0);
 }
 
-// --- 3. EXTRACCIÓN REAL CON IA ---
+// --- 3. EXTRACCIÓN REAL CON IA (MODO DIAGNÓSTICO) ---
 async function extractWithAI(text, fileName) {
     try {
         const res = await fetch('/api/analyze', {
@@ -37,21 +37,26 @@ async function extractWithAI(text, fileName) {
             body: JSON.stringify({ prompt: text })
         });
 
-        if (!res.ok) throw new Error("Error en la respuesta de la API");
-
         const data = await res.json();
-        // Limpiamos la respuesta por si la IA devuelve bloques de código markdown
+
+        if (!res.ok) {
+            // ESTO TE DIRÁ EL ERROR REAL (Saldo, Llave, etc.)
+            const errorMsg = data.error || "Error desconocido en la API";
+            alert("DIAGNÓSTICO DE OPENAI:\n" + errorMsg);
+            throw new Error(errorMsg);
+        }
+
+        // Limpiamos la respuesta de la IA
         let content = data.choices[0].message.content.replace(/```json\n?|```/g, '').trim();
         let inv = JSON.parse(content);
 
         inv.fileName = fileName;
         return inv;
     } catch (e) {
-        console.error("Error leyendo factura real:", e);
-        // Si falla la IA, devolvemos un objeto vacío para no romper la app
+        console.error("Detalle del error:", e);
         return {
             invoiceNum: "ERROR LECTURA",
-            period: "Revisar API",
+            period: "Ver Alerta",
             totalCalculated: 0,
             clientName: fileName
         };
@@ -68,13 +73,10 @@ async function processFiles(files) {
     invoices = [];
     for (const file of files) {
         try {
-            console.log("Analizando archivo real:", file.name);
+            console.log("Analizando archivo:", file.name);
             const text = await parsePDF(file);
-
-            // AQUÍ LLAMAMOS A LA IA DE VERDAD
             const data = await extractWithAI(text, file.name);
-            invoices.push(data);
-
+            if (data) invoices.push(data);
         } catch (e) {
             console.error("Error en " + file.name + ":", e);
         }
@@ -110,7 +112,7 @@ async function saveToDatabase(newInvoices) {
     }
     const stored = localStorage.getItem('audit_pro_db');
     let currentDb = stored ? JSON.parse(stored) : [];
-    newInvoices.forEach(inv => currentDb.unshift(inv)); // Añadir al principio
+    newInvoices.forEach(inv => currentDb.unshift(inv));
     localStorage.setItem('audit_pro_db', JSON.stringify(currentDb));
     dbInvoices = currentDb;
     renderHistory();
