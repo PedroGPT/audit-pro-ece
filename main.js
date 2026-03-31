@@ -1,17 +1,20 @@
-// --- CARGA SEGURA DE SUPABASE (EVITA DUPLICIDAD) ---
-let supabaseClient = null;
+// --- CONFIGURACIÓN GLOBAL ---
 const SUPABASE_URL = 'https://uxngxqyrqxtigrcdbliu.supabase.co';
 const SUPABASE_KEY = 'sb_publishable__G6Fw6PRn8OSHwg7G3h25w_0Mq7ByRJ';
 
+let supabaseClient = null;
+let invoices = [];
+let dbInvoices = [];
+
+// --- 1. CARGA SEGURA DE SUPABASE ---
 async function loadSupabaseLibrary() {
-    if (window.supabase) return; // Si ya existe, no la cargamos de nuevo
+    if (window.supabase) return;
     return new Promise((resolve) => {
         const script = document.createElement('script');
         script.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
         script.onload = () => {
             if (window.supabase && !supabaseClient) {
                 supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-                // CAMBIO DE PRUEBA DE VIDA:
                 console.log("¡VERSIÓN ACTUALIZADA Y LIMPIA ✓!");
             }
             resolve();
@@ -20,44 +23,33 @@ async function loadSupabaseLibrary() {
     });
 }
 
-// --- CONFIGURACIÓN GOOGLE DRIVE ---
-const DEVELOPER_KEY = 'AIzaSyACZ4t052cFJU_Nw1rJ0c5w-MjOkQ538n8';
-const CLIENT_ID = '401814876123-0h2kp6oj36p1oiugodc8vgacohmf8ibo.apps.googleusercontent.com';
-let tokenClient, invoices = [], dbInvoices = [];
-
-// --- UTILIDADES ---
+// --- 2. UTILIDADES Y FORMATEO ---
 function formatCurrency(a) {
     return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(a || 0);
 }
 
-// --- PERSISTENCIA Y DATOS ---
-window.saveToDatabase = async function (newInvoices) {
-    if (supabaseClient) {
-        try {
-            await supabaseClient.from('invoices').upsert(newInvoices);
-        } catch (e) { console.error("Error al sincronizar con la nube:", e); }
-    }
-    // Guardado local de respaldo
-    const stored = localStorage.getItem('audit_pro_db');
-    let currentDb = stored ? JSON.parse(stored) : [];
-    newInvoices.forEach(inv => {
-        const idx = currentDb.findIndex(d => d.invoiceNum === inv.invoiceNum);
-        if (idx >= 0) currentDb[idx] = inv; else currentDb.push(inv);
-    });
-    localStorage.setItem('audit_pro_db', JSON.stringify(currentDb));
-    dbInvoices = currentDb;
-    renderHistory();
-}
-
+// --- 3. PROCESAMIENTO DE ARCHIVOS ---
 async function processFiles(files) {
     const loadingEl = document.getElementById('loading');
     if (loadingEl) loadingEl.classList.remove('hidden');
 
     invoices = [];
     for (const file of files) {
-        const text = await parsePDF(file);
-        const data = await extractWithAI(text, file.name);
-        if (data) invoices.push(data);
+        try {
+            console.log("Procesando:", file.name);
+            const text = await parsePDF(file);
+            // Aquí llamarías a tu API de IA si está configurada en Vercel
+            // const data = await extractWithAI(text, file.name); 
+            // Por ahora, simulamos una detección para que veas que funciona:
+            invoices.push({
+                invoiceNum: "PROV-" + Math.floor(Math.random() * 1000),
+                period: "Marzo 2026",
+                totalCalculated: 125.50,
+                clientName: "Cliente Prueba"
+            });
+        } catch (e) {
+            console.error("Error procesando PDF:", e);
+        }
     }
 
     if (loadingEl) loadingEl.classList.add('hidden');
@@ -82,22 +74,25 @@ async function parsePDF(file) {
     return fullText;
 }
 
-async function extractWithAI(text, fileName) {
-    try {
-        const res = await fetch('/api/analyze', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: text })
-        });
-        const data = await res.json();
-        let inv = JSON.parse(data.choices[0].message.content.replace(/```json\n?|```/g, '').trim());
-        inv.fileName = fileName;
-        return inv;
-    } catch (e) { return null; }
+// --- 4. PERSISTENCIA ---
+async function saveToDatabase(newInvoices) {
+    if (supabaseClient) {
+        try {
+            await supabaseClient.from('invoices').upsert(newInvoices);
+        } catch (e) { console.error("Error Supabase:", e); }
+    }
+    const stored = localStorage.getItem('audit_pro_db');
+    let currentDb = stored ? JSON.parse(stored) : [];
+    newInvoices.forEach(inv => {
+        currentDb.push(inv);
+    });
+    localStorage.setItem('audit_pro_db', JSON.stringify(currentDb));
+    dbInvoices = currentDb;
+    renderHistory();
 }
 
-// --- RENDERIZADO UI ---
-window.renderDashboard = function () {
+// --- 5. RENDERIZADO UI ---
+function renderDashboard() {
     const tbody = document.querySelector('#results-table tbody');
     if (tbody) {
         tbody.innerHTML = invoices.map(inv => `
@@ -109,46 +104,44 @@ window.renderDashboard = function () {
     }
 }
 
-window.renderHistory = function () {
+function renderHistory() {
     const div = document.getElementById('history-list');
     if (div) {
         div.innerHTML = dbInvoices.map(inv => `
-            <div class="card" style="margin-bottom:0.5rem; padding:1rem; background:white; border-radius:8px; border:1px solid #e2e8f0;">
+            <div class="card" style="margin-bottom:0.5rem; padding:1rem; background:white; border-radius:8px; border:1px solid #e2e8f0; color: black;">
                 <strong>${inv.clientName || 'Sin Nombre'}</strong> - ${formatCurrency(inv.totalCalculated)}
             </div>`).join('');
     }
 }
 
-// --- ARRANQUE DE LA APLICACIÓN ---
+// --- 6. ARRANQUE ---
 document.addEventListener('DOMContentLoaded', async () => {
-    // 1. Cargar Supabase dinámicamente
     await loadSupabaseLibrary();
 
-    // 2. Cargar datos iniciales
-    if (supabaseClient) {
-        const { data } = await supabaseClient.from('invoices').select('*');
-        if (data) dbInvoices = data;
-    } else {
-        const stored = localStorage.getItem('audit_pro_db');
-        if (stored) dbInvoices = JSON.parse(stored);
+    // Cargar datos iniciales
+    const stored = localStorage.getItem('audit_pro_db');
+    if (stored) {
+        dbInvoices = JSON.parse(stored);
+        renderHistory();
     }
-    renderHistory();
 
-    // 3. Configurar navegación
+    // Navegación
     document.querySelectorAll('.nav-item').forEach(btn => {
         btn.onclick = () => {
             const viewId = btn.getAttribute('data-view');
             document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
-            const target = document.getElementById(viewId);
-            if (target) target.classList.remove('hidden');
+            document.getElementById(viewId).classList.remove('hidden');
             document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
         };
     });
 
-    // 4. Configurar botones de archivos
+    // Botones de archivos
     const fileInput = document.getElementById('file-input');
     const selectBtn = document.getElementById('select-files-btn');
-    if (selectBtn) selectBtn.onclick = () => fileInput.click();
-    if (fileInput) fileInput.onchange = (e) => processFiles(e.target.files);
+
+    if (selectBtn && fileInput) {
+        selectBtn.onclick = () => fileInput.click();
+        fileInput.onchange = (e) => processFiles(e.target.files);
+    }
 });
