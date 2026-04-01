@@ -195,7 +195,8 @@ async function runExtractionIA(text, fileName) {
         const subtotalConIEE = baseFromCosts + iee;
         const iva = inv.ivaTax || subtotalConIEE * BOE.taxes.iva;
 
-        inv.totalCalculated = parseFloat(inv.total || 0) || subtotalConIEE + iva;
+        inv.total = parseFloat(inv.total || 0);
+        inv.totalCalculated = inv.total > 0 ? inv.total : subtotalConIEE + iva;
 
         inv.breakdown = {
             energyCost: parseFloat(inv.energyCost) || 0,
@@ -206,6 +207,7 @@ async function runExtractionIA(text, fileName) {
             subtotalBase: baseFromCosts,
             iee: iee,
             subtotalConIEE: subtotalConIEE,
+            igic: inv.igicTax || 0,
             iva: iva,
             totalFinal: inv.totalCalculated
         };
@@ -587,21 +589,39 @@ function openCompareView(index) {
     const compareSection = document.getElementById('comparison-results');
     if (!compareSection) return;
 
+    const energy = parseFloat(inv.energyCost || inv.breakdown?.energyCost || 0);
+    const power = parseFloat(inv.powerCost || inv.breakdown?.powerCost || 0);
+    const others = parseFloat(inv.othersCost || inv.breakdown?.othersCost || 0);
+    const alquiler = parseFloat(inv.alquiler || inv.breakdown?.alquiler || 0);
+    const reactive = parseFloat(inv.reactiveCost || inv.breakdown?.reactiveCost || 0);
+    const iee = parseFloat(inv.electricityTax || inv.breakdown?.iee || 0);
+    const igic = parseFloat(inv.igicTax || inv.breakdown?.igic || 0);
+    const iva = parseFloat(inv.ivaTax || inv.breakdown?.iva || 0);
+    const totalDetected = parseFloat(inv.total || inv.totalCalculated || 0);
+
+    const computedTotal = energy + power + others + alquiler + reactive + iee + igic + iva;
+
+    const totalToShow = totalDetected > 0 ? totalDetected : computedTotal;
+
     const html = `
         <h3>Comparativa para factura ${inv.invoiceNum || 'S/N'}</h3>
         <p>Cliente: ${inv.clientName || 'Desconocido'}</p>
         <p>Comercializadora: ${inv.comercializadora || 'N/D'}</p>
+        <p>Consumo total: ${inv.consumption?.toFixed(2) || '0'} kWh</p>
         <table class="modal-table">
             <thead><tr><th>Concepto</th><th>Importe</th></tr></thead>
             <tbody>
-                <tr><td>Coste energía</td><td>${formatCurrency(inv.energyCost)}</td></tr>
-                <tr><td>Coste potencia</td><td>${formatCurrency(inv.powerCost)}</td></tr>
-                <tr><td>Otros costes</td><td>${formatCurrency(inv.othersCost)}</td></tr>
-                <tr><td>Alquiler</td><td>${formatCurrency(inv.alquiler)}</td></tr>
-                <tr><td>Reactiva</td><td>${formatCurrency(inv.reactiveCost)}</td></tr>
-                <tr><td>IEE</td><td>${formatCurrency(inv.electricityTax || inv.breakdown?.iee)}</td></tr>
-                <tr><td>IVA</td><td>${formatCurrency(inv.ivaTax || inv.breakdown?.iva)}</td></tr>
-                <tr><td>Total</td><td>${formatCurrency(inv.totalCalculated)}</td></tr>
+                <tr><td>Coste energía</td><td>${formatCurrency(energy)}</td></tr>
+                <tr><td>Coste potencia</td><td>${formatCurrency(power)}</td></tr>
+                <tr><td>Otros costes</td><td>${formatCurrency(others)}</td></tr>
+                <tr><td>Alquiler</td><td>${formatCurrency(alquiler)}</td></tr>
+                <tr><td>Reactiva</td><td>${formatCurrency(reactive)}</td></tr>
+                <tr><td>IEE</td><td>${formatCurrency(iee)}</td></tr>
+                <tr><td>IGIC</td><td>${formatCurrency(igic)}</td></tr>
+                <tr><td>IVA</td><td>${formatCurrency(iva)}</td></tr>
+                <tr class="mirror-row-total"><td>Total (detectado)</td><td>${formatCurrency(totalDetected)}</td></tr>
+                <tr class="mirror-row-total"><td>Total (recalculado)</td><td>${formatCurrency(computedTotal)}</td></tr>
+                <tr class="mirror-row-total"><td>Total a mostrar</td><td>${formatCurrency(totalToShow)}</td></tr>
             </tbody>
         </table>
     `;
