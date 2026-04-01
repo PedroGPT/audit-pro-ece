@@ -142,6 +142,9 @@ async function processFiles(files) {
     if (invoices.length > 0) {
         renderAuditDashboard();
         switchView('audit-view');
+        // Mostrar el dashboard después del procesamiento
+        const dashboard = document.getElementById('dashboard');
+        if (dashboard) dashboard.classList.remove('hidden');
     }
     if (loading) loading.classList.add('hidden');
 }
@@ -290,17 +293,23 @@ function loadLocalStore() {
 // 7. MOTOR DE RENDERIZADO Y UI
 // ========================================================================
 function renderAuditDashboard() {
+    console.log(`[UI] Renderizando dashboard con ${invoices.length} facturas`);
     if (invoices.length === 0) return;
 
     const last = invoices[0];
     const consumption = Number(last.consumption) || 0;
     const totalCalculated = Number(last.totalCalculated) || 0;
 
+    console.log(`[UI] Actualizando métricas: consumo=${consumption}, total=${totalCalculated}`);
+
     document.getElementById('total-kwh').innerText = `${consumption.toFixed(0)} kWh`;
     document.getElementById('avg-price').innerText = `${(consumption > 0 ? totalCalculated / consumption : 0).toFixed(4)} €/kWh`;
 
     const tbody = document.querySelector('#results-table tbody');
-    if (!tbody) return;
+    if (!tbody) {
+        console.error('[UI] No se encontró tbody de la tabla de resultados');
+        return;
+    }
 
     tbody.innerHTML = invoices.map((inv) => `
         <tr>
@@ -315,6 +324,8 @@ function renderAuditDashboard() {
             </td>
         </tr>
     `).join('');
+    
+    console.log('[UI] Dashboard renderizado correctamente');
 }
 
 function renderHistory() {
