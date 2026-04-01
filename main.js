@@ -103,6 +103,84 @@ function switchView(viewId) {
     });
 }
 
+function parseSpanishNumber(value) {
+    if (value === null || value === undefined) return 0;
+    return Number(String(value).replace(/\./g, '').replace(/,/g, '.')) || 0;
+}
+
+function detectComercializadoraFromText(text) {
+    const raw = String(text || '');
+    const lower = raw.toLowerCase();
+
+    const known = [
+        'endesa', 'iberdrola', 'naturgy', 'repsol', 'totalenergies',
+        'edp', 'holaluz', 'factorenergia', 'audax', 'fenie'
+    ];
+    const hit = known.find(name => lower.includes(name));
+    if (hit) return hit.toUpperCase();
+
+    const labelMatch = lower.match(/(?:comercializadora|compa(?:ñ|n)i?a|empresa)\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]{3,80})/i);
+    if (labelMatch) return labelMatch[1].trim().toUpperCase();
+
+    return 'N/D';
+}
+
+function extractEnergyPeriodItems(text) {
+    const lines = String(text || '').split(/\r?\n/);
+    const sectionStart = lines.findIndex(l => /importe\s+por\s+energ[ií]a\s+consumida/i.test(l));
+    const sectionEnd = sectionStart >= 0
+        ? lines.slice(sectionStart + 1).findIndex(l => /coste\s+de\s+peajes|alquiler|otros\s+conceptos/i.test(l))
+        : -1;
+
+    const scoped = sectionStart >= 0
+        ? lines.slice(sectionStart, sectionEnd >= 0 ? sectionStart + 1 + sectionEnd : sectionStart + 20)
+        : lines;
+
+    const byPeriod = {};
+    const re = /P([1-6])\s*:\s*(\d+[\d\.,]*)\s*kwh\s*\*\s*(\d+[\d\.,]*)\s*€\s*\/\s*kwh/i;
+
+    scoped.forEach(line => {
+        const m = line.match(re);
+        if (!m) return;
+        const period = Number(m[1]);
+        const kwh = parseSpanishNumber(m[2]);
+        const unitPriceKwh = parseSpanishNumber(m[3]);
+        if (!byPeriod[period]) {
+            byPeriod[period] = { period, kwh, unitPriceKwh };
+        }
+    });
+
+    return Object.values(byPeriod).sort((a, b) => a.period - b.period);
+}
+
+function extractPowerPeriodItems(text) {
+    const lines = String(text || '').split(/\r?\n/);
+    const sectionStart = lines.findIndex(l => /importe\s+por\s+potencia|facturaci[oó]n\s+por\s+potencia/i.test(l));
+    const sectionEnd = sectionStart >= 0
+        ? lines.slice(sectionStart + 1).findIndex(l => /facturaci[oó]n\s+por\s+energ[ií]a|importe\s+por\s+energ[ií]a/i.test(l))
+        : -1;
+
+    const scoped = sectionStart >= 0
+        ? lines.slice(sectionStart, sectionEnd >= 0 ? sectionStart + 1 + sectionEnd : sectionStart + 20)
+        : lines;
+
+    const byPeriod = {};
+    const re = /P([1-6])\s*:\s*(\d+[\d\.,]*)\s*kw\s*\*\s*(\d+[\d\.,]*)\s*€\s*\/\s*kw/i;
+
+    scoped.forEach(line => {
+        const m = line.match(re);
+        if (!m) return;
+        const period = Number(m[1]);
+        const kw = parseSpanishNumber(m[2]);
+        const unitPriceKw = parseSpanishNumber(m[3]);
+        if (!byPeriod[period]) {
+            byPeriod[period] = { period, kw, unitPriceKw };
+        }
+    });
+
+    return Object.values(byPeriod).sort((a, b) => a.period - b.period);
+}
+
 // ========================================================================
 // 5. MOTOR DE PROCESAMIENTO DE ARCHIVOS (AUDITORÍA IA CON OPENAI)
 // ========================================================================
@@ -161,7 +239,10 @@ async function runExtractionIA(text, fileName) {
                 engine: 'openai',
                 prompt: `Actúa como auditor energético. Extrae de este texto los siguientes campos en un JSON:
                 invoiceNum, cups, period, clientName, supplyAddress, powerCost, energyCost, othersCost, alquiler, reactiveCost,
-                electricityTax, igicTax, ivaTax, total, consumptionItems (array de 6 números P1..P6).
+                comercializadora, electricityTax, igicTax, ivaTax, total,
+                consumptionItems (array de 6 números P1..P6),
+                energyPeriodItems (array [{period,kwh,unitPriceKwh}]),
+                powerPeriodItems (array [{period,kw,unitPriceKw}]).
                 Incluye only JSON válido, sin explicaciones extra.
                 Texto: ${text.substring(0, 6000)}` 
             })
@@ -176,14 +257,41 @@ async function runExtractionIA(text, fileName) {
         // Completar campos adicionales del JSON IA
         inv.invoiceNum = inv.invoiceNum || inv.factura || inv.invoice || 'S/N';
         inv.clientName = inv.clientName || inv.customerName || inv.cliente || 'Desconocido';
-        inv.comercializadora = inv.comercializadora || inv.provider || inv.vendedor || inv.company || inv.distribuidora || inv.operador || 'N/D';
+        inv.comercializadora = inv.comercializadora || inv.provider || inv.vendedor || inv.company || inv.distribuidora || inv.operador || detectComercializadoraFromText(text);
         inv.supplyAddress = inv.supplyAddress || inv.address || inv.direccion || 'N/D';
         inv.cups = inv.cups || inv.CUPS || 'N/D';
         inv.period = inv.period || inv.periodo || 'N/D';
 
         // Si el modelo da items por periodo guardarlos
+        inv.energyPeriodItems = (inv.energyPeriodItems || []).map(item => ({
+            period: Number(item.period) || 0,
+            kwh: parseSpanishNumber(item.kwh),
+            unitPriceKwh: parseSpanishNumber(item.unitPriceKwh)
+        })).filter(item => item.period >= 1 && item.period <= 6);
+
+        inv.powerPeriodItems = (inv.powerPeriodItems || []).map(item => ({
+            period: Number(item.period) || 0,
+            kw: parseSpanishNumber(item.kw),
+            unitPriceKw: parseSpanishNumber(item.unitPriceKw)
+        })).filter(item => item.period >= 1 && item.period <= 6);
+
+        if (inv.energyPeriodItems.length === 0) {
+            inv.energyPeriodItems = extractEnergyPeriodItems(text);
+        }
+        if (inv.powerPeriodItems.length === 0) {
+            inv.powerPeriodItems = extractPowerPeriodItems(text);
+        }
+
         inv.consumptionItems = (inv.consumptionItems || inv.p1p6 || inv.periods || []).map(x => Number(x) || 0);
+        if (inv.consumptionItems.length === 0 && inv.energyPeriodItems.length > 0) {
+            const periods = [0, 0, 0, 0, 0, 0];
+            inv.energyPeriodItems.forEach(item => {
+                periods[item.period - 1] = item.kwh;
+            });
+            inv.consumptionItems = periods;
+        }
         inv.consumption = (inv.consumptionItems || []).reduce((a, b) => a + (parseFloat(b) || 0), 0);
+        inv.energyUnitPriceAvg = inv.consumption > 0 ? ((parseFloat(inv.energyCost) || 0) / inv.consumption) : 0;
 
         // En caso de que IA entregue totales directos
         inv.electricityTax = parseFloat(inv.electricityTax || 0);
@@ -254,6 +362,9 @@ function fallbackParseInvoiceText(text, fileName) {
         _auditStatus: 'fallback'
     };
 
+    invoice.energyPeriodItems = extractEnergyPeriodItems(text);
+    invoice.powerPeriodItems = extractPowerPeriodItems(text);
+
     // Extraer número de factura
     const invoiceMatch = textLower.match(/factura\s*(?:n[º°]?|num|núm)?\s*[:\-]?\s*([a-z0-9\-]+)/i);
     if (invoiceMatch) {
@@ -261,9 +372,11 @@ function fallbackParseInvoiceText(text, fileName) {
     }
 
     // Extraer comercializadora
-    const comercializadoraMatch = textLower.match(/(?:comercializadora|vendedor|empresa)\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]+)/i);
+    const comercializadoraMatch = textLower.match(/(?:comercializadora|vendedor|empresa|compa(?:ñ|n)i?a|distribuidora)\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]+)/i);
     if (comercializadoraMatch) {
         invoice.comercializadora = comercializadoraMatch[1].trim();
+    } else {
+        invoice.comercializadora = detectComercializadoraFromText(text);
     }
 
     // Extraer nombre de cliente
@@ -276,7 +389,14 @@ function fallbackParseInvoiceText(text, fileName) {
     const kwhMatches = [...textLower.matchAll(/(\d+[\d\.,]*)\s*kwh/gi)].map(m => Number(m[1].replace(/\./g, '').replace(/,/g, '.')) || 0);
     const consumoTotalMatch = textLower.match(/consumo\s*(?:real\s*)?total\s*[:\-]?\s*(\d+[\d\.,]*)/i);
 
-    if (consumoTotalMatch) {
+    if (invoice.energyPeriodItems.length > 0) {
+        const periods = [0, 0, 0, 0, 0, 0];
+        invoice.energyPeriodItems.forEach(item => {
+            periods[item.period - 1] = item.kwh;
+        });
+        invoice.consumptionItems = periods;
+        invoice.consumption = periods.reduce((a, b) => a + b, 0);
+    } else if (consumoTotalMatch) {
         invoice.consumption = Number(consumoTotalMatch[1].replace(/\./g, '').replace(/,/g, '.')) || invoice.consumption;
     } else if (kwhMatches.length > 0) {
         // Sumar todos los kWh de los periodos (P1..P6) para mayor precisión
@@ -539,6 +659,13 @@ function formatCurrency(a) {
 }
 
 function buildInvoiceDetailTable(inv) {
+    const energyPeriodsText = (inv.energyPeriodItems && inv.energyPeriodItems.length > 0)
+        ? inv.energyPeriodItems.map(item => `P${item.period}: ${item.kwh.toFixed(2)} kWh @ ${item.unitPriceKwh.toFixed(6)} €/kWh`).join(' | ')
+        : 'N/D';
+    const powerPeriodsText = (inv.powerPeriodItems && inv.powerPeriodItems.length > 0)
+        ? inv.powerPeriodItems.map(item => `P${item.period}: ${item.kw.toFixed(2)} kW @ ${item.unitPriceKw.toFixed(6)} €/kW`).join(' | ')
+        : 'N/D';
+
     const rows = [
         ['Factura', inv.invoiceNum || 'S/N'],
         ['Cliente', inv.clientName || 'N/D'],
@@ -548,6 +675,9 @@ function buildInvoiceDetailTable(inv) {
         ['Periodo', inv.period || 'N/D'],
         ['Consumo total (kWh)', inv.consumption?.toFixed(2) || '0'],
         ['Consumo por periodos (kWh)', (inv.consumptionItems && inv.consumptionItems.length > 0) ? inv.consumptionItems.map((v,o)=>`P${o+1}:${v.toFixed(2)}`).join(' | ') : 'N/D'],
+        ['Energía por periodo', energyPeriodsText],
+        ['Potencia por periodo', powerPeriodsText],
+        ['Precio medio energía', `${(inv.energyUnitPriceAvg || 0).toFixed(6)} €/kWh`],
         ['Coste energía', formatCurrency(inv.energyCost)],
         ['Coste potencia', formatCurrency(inv.powerCost)],
         ['Otros costes', formatCurrency(inv.othersCost)],
@@ -624,48 +754,32 @@ function openCompareView(index) {
     const compareSection = document.getElementById('comparison-results');
     if (!compareSection) return;
 
-    // Promedio del historial (excluyendo esta misma factura si está en db)
-    const history = dbInvoices.length ? dbInvoices : invoices;
-    const historyExcludingSelf = history.filter(h => h.invoiceNum !== inv.invoiceNum);
+    const periodRows = (inv.energyPeriodItems || []).map(item => {
+        const idx = item.period - 1;
+        const fenie = MARKET_BENCHMARK.fenie.energy[idx] || 0;
+        const repsol = MARKET_BENCHMARK.repsol.energy[idx] || 0;
+        return `<tr>
+            <td>P${item.period}</td>
+            <td>${item.kwh.toFixed(2)} kWh</td>
+            <td>${item.unitPriceKwh.toFixed(6)} €/kWh</td>
+            <td>${fenie.toFixed(6)} €/kWh</td>
+            <td>${repsol.toFixed(6)} €/kWh</td>
+        </tr>`;
+    }).join('');
 
-    const avg = (field) => {
-        if (!historyExcludingSelf.length) return 0;
-        const sum = historyExcludingSelf.reduce((acc, item) => acc + parseFloat(item[field] || 0), 0);
-        return sum / historyExcludingSelf.length;
-    };
-
-    const energy = parseFloat(inv.energyCost || inv.breakdown?.energyCost || 0);
-    const power = parseFloat(inv.powerCost || inv.breakdown?.powerCost || 0);
-    const others = parseFloat(inv.othersCost || inv.breakdown?.othersCost || 0);
-    const alquiler = parseFloat(inv.alquiler || inv.breakdown?.alquiler || 0);
-    const reactive = parseFloat(inv.reactiveCost || inv.breakdown?.reactiveCost || 0);
-    const iee = parseFloat(inv.electricityTax || inv.breakdown?.iee || 0);
-    const igic = parseFloat(inv.igicTax || inv.breakdown?.igic || 0);
-    const iva = parseFloat(inv.ivaTax || inv.breakdown?.iva || 0);
-    const totalDetected = parseFloat(inv.total || inv.totalCalculated || 0);
-
-    const computedTotal = energy + power + others + alquiler + reactive + iee + igic + iva;
-    const totalToShow = totalDetected > 0 ? totalDetected : computedTotal;
-    const impuestoLabel = inv.taxName || (igic > 0 ? 'IGIC' : 'IVA');
-    const impuestoValor = parseFloat(inv.taxValue || inv.breakdown?.taxAmount || (igic > 0 ? igic : iva));
+    const avgCurrent = (inv.energyUnitPriceAvg || (inv.consumption > 0 ? (parseFloat(inv.energyCost || 0) / inv.consumption) : 0));
+    const avgFenie = MARKET_BENCHMARK.fenie.energy.reduce((a, b) => a + b, 0) / MARKET_BENCHMARK.fenie.energy.length;
+    const avgRepsol = MARKET_BENCHMARK.repsol.energy.reduce((a, b) => a + b, 0) / MARKET_BENCHMARK.repsol.energy.length;
 
     const html = `
         <h3>Comparativa para factura ${inv.invoiceNum || 'S/N'}</h3>
         <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Comercializadora:</strong> ${inv.comercializadora || 'N/D'}</p>
-        <p><strong>Histórico (promedio)</strong> de ${historyExcludingSelf.length} factura(s):</p>
+        <p><strong>Comparativa de precios de energía</strong> (€/kWh por periodo)</p>
         <table class="modal-table">
-            <thead><tr><th>Concepto</th><th>Factura actual</th><th>Promedio histórico</th></tr></thead>
+            <thead><tr><th>Periodo</th><th>Consumo</th><th>Precio actual</th><th>Fenie</th><th>Repsol</th></tr></thead>
             <tbody>
-                <tr><td>Coste energía</td><td>${formatCurrency(energy)}</td><td>${formatCurrency(avg('energyCost'))}</td></tr>
-                <tr><td>Coste potencia</td><td>${formatCurrency(power)}</td><td>${formatCurrency(avg('powerCost'))}</td></tr>
-                <tr><td>Otros costes</td><td>${formatCurrency(others)}</td><td>${formatCurrency(avg('othersCost'))}</td></tr>
-                <tr><td>Alquiler</td><td>${formatCurrency(alquiler)}</td><td>${formatCurrency(avg('alquiler'))}</td></tr>
-                <tr><td>Reactiva</td><td>${formatCurrency(reactive)}</td><td>${formatCurrency(avg('reactiveCost'))}</td></tr>
-                <tr><td>IEE</td><td>${formatCurrency(iee)}</td><td>${formatCurrency(avg('electricityTax'))}</td></tr>
-                <tr><td>${impuestoLabel}</td><td>${formatCurrency(impuestoValor)}</td><td>${formatCurrency(avg(impuestoLabel === 'IGIC' ? 'igicTax' : 'ivaTax'))}</td></tr>
-                <tr><td>Total detectado</td><td>${formatCurrency(totalDetected)}</td><td>${formatCurrency(avg('totalCalculated'))}</td></tr>
-                <tr><td>Total recalculado</td><td>${formatCurrency(computedTotal)}</td><td>${formatCurrency(avg('totalCalculated') || 0)}</td></tr>
-                <tr class="mirror-row-total"><td>Total a mostrar</td><td>${formatCurrency(totalToShow)}</td><td>-</td></tr>
+                ${periodRows || '<tr><td colspan="5">No hay periodos extraídos todavía</td></tr>'}
+                <tr class="mirror-row-total"><td>Promedio</td><td>-</td><td>${avgCurrent.toFixed(6)} €/kWh</td><td>${avgFenie.toFixed(6)} €/kWh</td><td>${avgRepsol.toFixed(6)} €/kWh</td></tr>
             </tbody>
         </table>
     `;
