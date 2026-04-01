@@ -294,7 +294,10 @@ function loadLocalStore() {
 // ========================================================================
 function renderAuditDashboard() {
     console.log(`[UI] Renderizando dashboard con ${invoices.length} facturas`);
-    if (invoices.length === 0) return;
+    if (invoices.length === 0) {
+        console.log('[UI] No hay facturas para mostrar');
+        return;
+    }
 
     const last = invoices[0];
     const consumption = Number(last.consumption) || 0;
@@ -302,8 +305,23 @@ function renderAuditDashboard() {
 
     console.log(`[UI] Actualizando métricas: consumo=${consumption}, total=${totalCalculated}`);
 
-    document.getElementById('total-kwh').innerText = `${consumption.toFixed(0)} kWh`;
-    document.getElementById('avg-price').innerText = `${(consumption > 0 ? totalCalculated / consumption : 0).toFixed(4)} €/kWh`;
+    // Verificar que los elementos existen
+    const totalKwhEl = document.getElementById('total-kwh');
+    const avgPriceEl = document.getElementById('avg-price');
+    
+    if (totalKwhEl) {
+        totalKwhEl.innerText = `${consumption.toFixed(0)} kWh`;
+        console.log(`[UI] Actualizado total-kwh: ${totalKwhEl.innerText}`);
+    } else {
+        console.error('[UI] Elemento total-kwh no encontrado');
+    }
+    
+    if (avgPriceEl) {
+        avgPriceEl.innerText = `${(consumption > 0 ? totalCalculated / consumption : 0).toFixed(4)} €/kWh`;
+        console.log(`[UI] Actualizado avg-price: ${avgPriceEl.innerText}`);
+    } else {
+        console.error('[UI] Elemento avg-price no encontrado');
+    }
 
     const tbody = document.querySelector('#results-table tbody');
     if (!tbody) {
@@ -311,7 +329,7 @@ function renderAuditDashboard() {
         return;
     }
 
-    tbody.innerHTML = invoices.map((inv) => `
+    tbody.innerHTML = invoices.map((inv, index) => `
         <tr>
             <td>
                 <strong>${inv.invoiceNum || 'S/N'}</strong><br>
@@ -321,6 +339,7 @@ function renderAuditDashboard() {
             <td class="text-right">${formatCurrency(inv.totalCalculated)}</td>
             <td class="text-right">
                  <button class="btn primary btn-sm" onclick="switchView('compare-view')">Ver Comparativa</button>
+                 <button class="btn secondary btn-sm" onclick="deleteCurrentInvoice(${index})" style="margin-left: 0.5rem; background-color: #ef4444; color: white;">Eliminar</button>
             </td>
         </tr>
     `).join('');
@@ -333,14 +352,36 @@ function renderHistory() {
     if (!historyList) return;
 
     if (!dbInvoices.length) {
-        historyList.innerHTML = '<p>No hay facturas procesadas aún.</p>';
+        historyList.innerHTML = `
+            <div style="text-align: center; padding: 2rem;">
+                <p>No hay facturas procesadas aún.</p>
+            </div>
+        `;
         return;
     }
 
-    historyList.innerHTML = dbInvoices.map(inv => `
-        <div class="card">
+    // Agregar botón para vaciar todo el historial
+    const clearAllButton = `
+        <div style="text-align: center; margin-bottom: 1rem;">
+            <button class="btn secondary" onclick="clearAllHistory()" style="background-color: #dc2626; color: white; border: none;">
+                🗑️ Vaciar Todo el Historial
+            </button>
+        </div>
+    `;
+
+    historyList.innerHTML = clearAllButton + dbInvoices.map((inv, index) => `
+        <div class="card" style="position: relative;">
+            <button class="btn" onclick="deleteHistoryItem(${index})" 
+                    style="position: absolute; top: 0.5rem; right: 0.5rem; 
+                           background-color: #ef4444; color: white; border: none; 
+                           border-radius: 50%; width: 30px; height: 30px; 
+                           cursor: pointer; font-size: 14px;" 
+                    title="Eliminar esta factura">
+                ×
+            </button>
             <strong>${inv.fileName || inv.invoiceNum || 'N/A'}</strong> - ${inv.period || 'Periodo desconocido'}
             <br>Total: ${formatCurrency(inv.totalCalculated)} - Consumo: ${inv.consumption?.toFixed(2) || 0} kWh
+            <br><small style="color: #64748b;">Estado: ${inv._auditStatus || 'Procesado'}</small>
         </div>
     `).join('');
 }
@@ -353,7 +394,53 @@ function formatCurrency(a) {
 }
 
 // ========================================================================
-// 9. INICIALIZACIÓN Y EVENTOS
+// 9. FUNCIONES DE GESTIÓN DE HISTORIAL
+// ========================================================================
+function deleteHistoryItem(index) {
+    if (confirm('¿Estás seguro de que quieres eliminar esta factura del historial?')) {
+        dbInvoices.splice(index, 1);
+        localStorage.setItem('audit_pro_db', JSON.stringify(dbInvoices));
+        renderHistory();
+        console.log(`[History] Eliminada factura en índice ${index}`);
+    }
+}
+
+function clearAllHistory() {
+    if (confirm('¿Estás seguro de que quieres vaciar TODO el historial? Esta acción no se puede deshacer.')) {
+        dbInvoices = [];
+        localStorage.removeItem('audit_pro_db');
+        renderHistory();
+        console.log('[History] Historial vaciado completamente');
+    }
+}
+
+function deleteCurrentInvoice(index) {
+    if (confirm('¿Estás seguro de que quieres eliminar esta factura del dashboard actual?')) {
+        invoices.splice(index, 1);
+        if (invoices.length === 0) {
+            // Si no quedan facturas, ocultar dashboard y volver a vista inicial
+            const dashboard = document.getElementById('dashboard');
+            if (dashboard) dashboard.classList.add('hidden');
+            switchView('audit-view');
+        } else {
+            renderAuditDashboard();
+        }
+        console.log(`[Dashboard] Eliminada factura en índice ${index}`);
+    }
+}
+
+function clearCurrentInvoices() {
+    if (confirm('¿Quieres limpiar todas las facturas del dashboard actual?')) {
+        invoices = [];
+        const dashboard = document.getElementById('dashboard');
+        if (dashboard) dashboard.classList.add('hidden');
+        switchView('audit-view');
+        console.log('[Dashboard] Dashboard limpiado');
+    }
+}
+
+// ========================================================================
+// 10. INICIALIZACIÓN Y EVENTOS
 // ========================================================================
 document.addEventListener('DOMContentLoaded', () => {
     initApp();
