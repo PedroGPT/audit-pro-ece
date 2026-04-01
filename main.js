@@ -122,13 +122,18 @@ async function processFiles(files) {
                 const textContent = await page.getTextContent();
                 fullText += textContent.items.map(item => item.str).join(" ") + "\n";
             }
+            
+            console.log(`[PDF] Texto extraído (${fullText.length} caracteres):`, fullText.substring(0, 200) + "...");
 
             // Extracción con IA (Configurado para tu OpenAI Key en el backend)
-            const auditData = await runExtractionIA(fullText, file.name);
-            if (auditData) {
-                invoices.push(auditData);
-                await cloudSync(auditData);
+            let auditData = await runExtractionIA(fullText, file.name);
+            if (!auditData) {
+                console.warn('No hay datos IA para', file.name, '- aplicando fallback local.');
+                auditData = fallbackParseInvoiceText(fullText, file.name);
             }
+            console.log(`[Result] Datos extraídos:`, auditData);
+            invoices.push(auditData);
+            await cloudSync(auditData);
         } catch (e) {
             console.error(`[Fatal] Error crítico en archivo ${file.name}:`, e);
         }
@@ -188,33 +193,58 @@ function fallbackParseInvoiceText(text, fileName) {
         _auditStatus: 'fallback'
     };
 
-    // Extraer consumo (kWh)
-    const kwhMatch = textLower.match(/(\d+[\d\.,]*)\s*kwh/);
-    if (kwhMatch) {
-        invoice.consumption = Number(kwhMatch[1].replace(/\./g, '').replace(/,/g, '.')) || 0;
+    // Extraer número de factura
+    const invoiceMatch = textLower.match(/factura\s*(?:n[º°]?|num|núm)?\s*[:\-]?\s*([a-z0-9\-]+)/i);
+    if (invoiceMatch) {
+        invoice.invoiceNum = invoiceMatch[1].toUpperCase();
     }
 
-    // Extraer total factura
-    const totalMatch = textLower.match(/total(?:\s*factura)?\s*[:\-]?\s*€?\s*(\d+[\d\.,]*)/);
-    if (totalMatch) {
-        invoice.totalCalculated = Number(totalMatch[1].replace(/\./g, '').replace(/,/g, '.')) || 0;
-    }
+    // Extraer consumo (kWh) - múltiples patrones
+    const kwhPatterns = [
+        /(\d+[\d\.,]*)\s*kwh/i,
+        /consumo\s*[:\-]?\s*(\d+[\d\.,]*)/i,
+        /energía\s*activa\s*[:\-]?\s*(\d+[\d\.,]*)/i,
+        /total\s*consumo\s*[:\-]?\s*(\d+[\d\.,]*)/i
+    ];
 
-    // Si tenemos consumo pero no total, aproximar si hay valores identificados
-    if (invoice.totalCalculated === 0) {
-        const priceMatch = textLower.match(/importe(?:\s*con\s*impuestos)?\s*[:\-]?\s*€?\s*(\d+[\d\.,]*)/);
-        if (priceMatch) {
-            invoice.totalCalculated = Number(priceMatch[1].replace(/\./g, '').replace(/,/g, '.')) || 0;
+    for (const pattern of kwhPatterns) {
+        const match = textLower.match(pattern);
+        if (match) {
+            invoice.consumption = Number(match[1].replace(/\./g, '').replace(/,/g, '.')) || 0;
+            break;
         }
     }
 
-    if (invoice.consumption > 0 && invoice.totalCalculated > 0) {
-        invoice.energyCost = invoice.totalCalculated;
+    // Extraer total factura - múltiples patrones
+    const totalPatterns = [
+        /total\s*(?:factura|importe)?\s*[:\-]?\s*€?\s*(\d+[\d\.,]*)/i,
+        /importe\s*total\s*[:\-]?\s*€?\s*(\d+[\d\.,]*)/i,
+        /a\s*pagar\s*[:\-]?\s*€?\s*(\d+[\d\.,]*)/i,
+        /total\s*a\s*pagar\s*[:\-]?\s*€?\s*(\d+[\d\.,]*)/i
+    ];
+
+    for (const pattern of totalPatterns) {
+        const match = textLower.match(pattern);
+        if (match) {
+            invoice.totalCalculated = Number(match[1].replace(/\./g, '').replace(/,/g, '.')) || 0;
+            break;
+        }
     }
 
-    if (invoice.consumption === 0 && invoice.totalCalculated === 0) {
-        console.warn('fallbackParseInvoiceText: no se extrajo consumo ni total de', fileName);
+    // Extraer periodo
+    const periodMatch = textLower.match(/periodo\s*[:\-]?\s*([a-z0-9\s\-\/]+)/i);
+    if (periodMatch) {
+        invoice.period = periodMatch[1].trim();
     }
+
+    // Si tenemos consumo y total, calcular precio medio
+    if (invoice.consumption > 0 && invoice.totalCalculated > 0) {
+        invoice.energyCost = invoice.totalCalculated * 0.8; // Aproximadamente 80% energía
+        invoice.powerCost = invoice.totalCalculated * 0.15;  // 15% potencia
+        invoice.othersCost = invoice.totalCalculated * 0.05;  // 5% otros
+    }
+
+    console.log(`[Fallback] Extraído de ${fileName}: consumo=${invoice.consumption}, total=${invoice.totalCalculated}`);
 
     return invoice;
 }

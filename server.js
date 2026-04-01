@@ -3,6 +3,7 @@ const cors = require('cors');
 const fetch = require('node-fetch');
 const path = require('path');
 const fs = require('fs');
+require('dotenv').config(); // Load environment variables from .env file
 
 const app = express();
 const PORT = 3001; // Changed to 3001 to avoid conflict with npx serve
