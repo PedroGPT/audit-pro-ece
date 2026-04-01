@@ -105,7 +105,36 @@ function switchView(viewId) {
 
 function parseSpanishNumber(value) {
     if (value === null || value === undefined) return 0;
-    return Number(String(value).replace(/\./g, '').replace(/,/g, '.')) || 0;
+    const str = String(value).trim().replace(/\s+/g, '');
+    if (!str) return 0;
+
+    // Caso mixto ES: 1.234,56
+    if (str.includes('.') && str.includes(',')) {
+        return Number(str.replace(/\./g, '').replace(/,/g, '.')) || 0;
+    }
+
+    // Caso ES simple: 123,45
+    if (str.includes(',')) {
+        return Number(str.replace(/,/g, '.')) || 0;
+    }
+
+    // Caso IA/EN: 0.097553
+    return Number(str) || 0;
+}
+
+function parsePeriodValue(value) {
+    if (value === null || value === undefined) return 0;
+    if (typeof value === 'number') return value >= 1 && value <= 6 ? value : 0;
+    const match = String(value).match(/[1-6]/);
+    return match ? Number(match[0]) : 0;
+}
+
+function firstPositiveNumber(...values) {
+    for (const v of values) {
+        const n = parseSpanishNumber(v);
+        if (n > 0) return n;
+    }
+    return 0;
 }
 
 function detectComercializadoraFromText(text) {
@@ -333,21 +362,21 @@ async function runExtractionIA(text, fileName) {
 
         // Si el modelo da items por periodo guardarlos
         inv.energyPeriodItems = (inv.energyPeriodItems || []).map(item => ({
-            period: Number(item.period) || 0,
-            kwh: parseSpanishNumber(item.kwh),
-            unitPriceKwh: parseSpanishNumber(item.unitPriceKwh)
+            period: parsePeriodValue(item.period ?? item.periodo ?? item.p),
+            kwh: firstPositiveNumber(item.kwh, item.consumption, item.consumo),
+            unitPriceKwh: firstPositiveNumber(item.unitPriceKwh, item.unitPrice, item.priceKwh, item.price, item.precio)
         })).filter(item => item.period >= 1 && item.period <= 6);
 
         inv.powerPeriodItems = (inv.powerPeriodItems || []).map(item => ({
-            period: Number(item.period) || 0,
-            kw: parseSpanishNumber(item.kw),
-            unitPriceKw: parseSpanishNumber(item.unitPriceKw)
+            period: parsePeriodValue(item.period ?? item.periodo ?? item.p),
+            kw: firstPositiveNumber(item.kw, item.powerKw, item.potencia),
+            unitPriceKw: firstPositiveNumber(item.unitPriceKw, item.unitPrice, item.priceKw, item.price, item.precio)
         })).filter(item => item.period >= 1 && item.period <= 6);
 
         const tollFromIA = (inv.tollPeriodItems || inv.tollsPeriodItems || inv.peajesPeriodItems || []).map(item => ({
-            period: Number(item.period) || 0,
-            kwh: parseSpanishNumber(item.kwh),
-            unitPriceKwh: parseSpanishNumber(item.unitPriceKwh)
+            period: parsePeriodValue(item.period ?? item.periodo ?? item.p),
+            kwh: firstPositiveNumber(item.kwh, item.consumption, item.consumo),
+            unitPriceKwh: firstPositiveNumber(item.unitPriceKwh, item.unitPrice, item.priceKwh, item.price, item.peajePrice, item.precioPeaje, item.precio)
         })).filter(item => item.period >= 1 && item.period <= 6);
 
         if (inv.energyPeriodItems.length === 0) {
@@ -370,6 +399,13 @@ async function runExtractionIA(text, fileName) {
             inv.tollPeriodItems = extractTollPeriodItems(text);
             inv._tollPeriodsSource = inv.tollPeriodItems.length > 0 ? 'regex' : 'none';
         }
+
+        console.log('[Debug] Toll extraction', {
+            source: inv._tollPeriodsSource,
+            tollFromIA,
+            tollFinal: inv.tollPeriodItems,
+            energyPeriods: inv.energyPeriodItems
+        });
 
         inv.consumptionItems = (inv.consumptionItems || inv.p1p6 || inv.periods || []).map(x => Number(x) || 0);
         if (inv.energyPeriodItems.length > 0) {
