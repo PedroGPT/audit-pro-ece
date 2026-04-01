@@ -753,7 +753,10 @@ function renderAuditDashboard() {
     }
     
     if (avgPriceEl) {
-        avgPriceEl.innerText = `${(consumption > 0 ? totalCalculated / consumption : 0).toFixed(4)} €/kWh`;
+        const avgEnergyUnitPrice = (consumption > 0)
+            ? ((Number(last.energyCost) || 0) / consumption)
+            : 0;
+        avgPriceEl.innerText = `${avgEnergyUnitPrice.toFixed(6)} €/kWh`;
         console.log(`[UI] Actualizado avg-price: ${avgPriceEl.innerText}`);
     } else {
         console.error('[UI] Elemento avg-price no encontrado');
@@ -839,9 +842,6 @@ function formatCurrency(a) {
 }
 
 function buildInvoiceDetailTable(inv) {
-    const energyPeriodsText = (inv.energyPeriodItems && inv.energyPeriodItems.length > 0)
-        ? inv.energyPeriodItems.map(item => `P${item.period}: ${item.kwh.toFixed(2)} kWh @ ${item.unitPriceKwh.toFixed(6)} €/kWh`).join(' | ')
-        : 'N/D';
     const powerPeriodsText = (inv.powerPeriodItems && inv.powerPeriodItems.length > 0)
         ? inv.powerPeriodItems.map(item => `P${item.period}: ${item.kw.toFixed(2)} kW @ ${item.unitPriceKw.toFixed(6)} €/kW`).join(' | ')
         : 'N/D';
@@ -919,12 +919,6 @@ function buildInvoiceDetailTable(inv) {
         ['Consumo total (kWh)', inv.consumption?.toFixed(2) || '0'],
         ['Consumo por periodos (kWh)', (inv.consumptionItems && inv.consumptionItems.length > 0) ? inv.consumptionItems.map((v,o)=>`P${o+1}:${v.toFixed(2)}`).join(' | ') : 'N/D'],
         ['Detalle periodos (tabla)', nestedPeriodsTable],
-        ['Energía por periodo', energyPeriodsText],
-        ['Potencia por periodo', powerPeriodsText],
-        ['Precio medio energía', `${(inv.energyUnitPriceAvg || 0).toFixed(6)} €/kWh`],
-        ['Coste energía (detalle periodos)', `${formatCurrency(totalEnergyCalc)} + peajes ${formatCurrency(totalTollsCalc)} = ${formatCurrency(totalEnergyCalc + totalTollsCalc)}`],
-        ['Coste energía (factura)', formatCurrency(inv.energyCost)],
-        ['Fuente peajes por periodo', inv._tollPeriodsSource || 'none'],
         ['Coste potencia (factura)', formatCurrency(inv.powerCost)],
         ['Detalle coste potencia por periodos', powerDetailRows || 'N/D'],
         ['Otros costes', formatCurrency(inv.othersCost)],
