@@ -973,17 +973,13 @@ function buildInvoiceDetailTable(inv) {
         ['Consumo total (kWh)', inv.consumption?.toFixed(2) || '0'],
         ['Consumo por periodos (kWh)', (inv.consumptionItems && inv.consumptionItems.length > 0) ? inv.consumptionItems.map((v,o)=>`P${o+1}:${v.toFixed(2)}`).join(' | ') : 'N/D'],
         ['Detalle periodos (tabla)', nestedPeriodsTable],
-        ['Coste potencia (factura)', formatCurrency(inv.powerCost)],
         ['Detalle coste potencia por periodos', powerNestedTable],
         ['Otros costes', formatCurrency(inv.othersCost)],
         ['Alquiler', formatCurrency(inv.alquiler)],
         ['Reactiva', formatCurrency(inv.reactiveCost)],
         ['Subtotal base', formatCurrency(inv.breakdown?.subtotalBase || 0)],
-        ['Impuesto electricidad', formatCurrency(inv.electricityTax || inv.breakdown?.iee || 0)],
-        ['Tipo de impuesto', inv.taxName || (inv.igicTax ? 'IGIC' : inv.ivaTax ? 'IVA' : 'N/D')],
-        ['Importe impuesto', formatCurrency(inv.taxValue || inv.breakdown?.taxAmount || 0)],
+        [inv.taxName || (inv.igicTax ? 'IGIC' : 'IVA'), formatCurrency(inv.taxValue || inv.breakdown?.taxAmount || 0)],
         ['Total calculado', formatCurrency(inv.totalCalculated)],
-        ['Validación peajes', inv._hasMandatoryTolls ? 'OK' : `FALTAN ${((inv._missingTollPeriods || []).map(p => `P${p}`).join(', ')) || 'periodos'}`],
         ['Estado', inv._auditStatus || 'N/D']
     ];
 
