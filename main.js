@@ -257,6 +257,54 @@ function validateMandatoryTolls(inv) {
     return inv._hasMandatoryTolls;
 }
 
+function normalizeEnergyAndTolls(inv) {
+    const energyInput = (inv.energyPeriodItems || []).filter(item => Number(item.period) >= 1 && Number(item.period) <= 6);
+    const tollInput = (inv.tollPeriodItems || []).filter(item => Number(item.period) >= 1 && Number(item.period) <= 6);
+
+    const energyByPeriod = {};
+    const tollByPeriod = {};
+
+    // Mantener peajes válidos existentes
+    tollInput.forEach(item => {
+        const period = Number(item.period);
+        const price = Number(item.unitPriceKwh || 0);
+        const kwh = Number(item.kwh || 0);
+        if (price > 0) {
+            if (!tollByPeriod[period] || price < tollByPeriod[period].unitPriceKwh) {
+                tollByPeriod[period] = { period, kwh, unitPriceKwh: price };
+            }
+        }
+    });
+
+    // Consolidar energía e inferir peajes cuando IA mezcla ambas en energyPeriodItems
+    for (let period = 1; period <= 6; period++) {
+        const candidates = energyInput
+            .filter(item => Number(item.period) === period && Number(item.kwh || 0) > 0 && Number(item.unitPriceKwh || 0) > 0)
+            .sort((a, b) => Number(b.unitPriceKwh || 0) - Number(a.unitPriceKwh || 0));
+
+        if (candidates.length === 0) continue;
+
+        const mainEnergy = candidates[0];
+        energyByPeriod[period] = {
+            period,
+            kwh: Number(mainEnergy.kwh || 0),
+            unitPriceKwh: Number(mainEnergy.unitPriceKwh || 0)
+        };
+
+        if (!tollByPeriod[period] && candidates.length > 1) {
+            const inferredToll = candidates[candidates.length - 1];
+            tollByPeriod[period] = {
+                period,
+                kwh: Number(inferredToll.kwh || 0),
+                unitPriceKwh: Number(inferredToll.unitPriceKwh || 0)
+            };
+        }
+    }
+
+    inv.energyPeriodItems = Object.values(energyByPeriod).sort((a, b) => a.period - b.period);
+    inv.tollPeriodItems = Object.values(tollByPeriod).sort((a, b) => a.period - b.period);
+}
+
 // ========================================================================
 // 5. MOTOR DE PROCESAMIENTO DE ARCHIVOS (AUDITORÍA IA CON OPENAI)
 // ========================================================================
@@ -400,6 +448,8 @@ async function runExtractionIA(text, fileName) {
             inv._tollPeriodsSource = inv.tollPeriodItems.length > 0 ? 'regex' : 'none';
         }
 
+        normalizeEnergyAndTolls(inv);
+
         console.log('[Debug] Toll extraction', {
             source: inv._tollPeriodsSource,
             tollFromIA,
@@ -490,6 +540,7 @@ function fallbackParseInvoiceText(text, fileName) {
     invoice.energyPeriodItems = extractEnergyPeriodItems(text);
     invoice.powerPeriodItems = extractPowerPeriodItems(text);
     invoice.tollPeriodItems = extractTollPeriodItems(text);
+    normalizeEnergyAndTolls(invoice);
     invoice._energyPeriodsSource = invoice.energyPeriodItems.length > 0 ? 'regex' : 'none';
     invoice._powerPeriodsSource = invoice.powerPeriodItems.length > 0 ? 'regex' : 'none';
     invoice._tollPeriodsSource = invoice.tollPeriodItems.length > 0 ? 'regex' : 'none';
