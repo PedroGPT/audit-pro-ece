@@ -126,57 +126,41 @@ function detectComercializadoraFromText(text) {
 }
 
 function extractEnergyPeriodItems(text) {
-    const lines = String(text || '').split(/\r?\n/);
-    const sectionStart = lines.findIndex(l => /importe\s+por\s+energ[ií]a\s+consumida/i.test(l));
-    const sectionEnd = sectionStart >= 0
-        ? lines.slice(sectionStart + 1).findIndex(l => /coste\s+de\s+peajes|alquiler|otros\s+conceptos/i.test(l))
-        : -1;
-
-    const scoped = sectionStart >= 0
-        ? lines.slice(sectionStart, sectionEnd >= 0 ? sectionStart + 1 + sectionEnd : sectionStart + 20)
-        : lines;
+    const raw = String(text || '');
+    const blockMatch = raw.match(/importe\s+por\s+energ[ií]a\s+consumida\s*:?([\s\S]{0,2000}?)(?:coste\s+de\s+peajes|alquiler|otros\s+conceptos|impuesto\s+de\s+electricidad)/i);
+    const scoped = blockMatch ? blockMatch[1] : raw;
 
     const byPeriod = {};
-    const re = /P([1-6])\s*:\s*(\d+[\d\.,]*)\s*kwh\s*\*\s*(\d+[\d\.,]*)\s*€\s*\/\s*kwh/i;
-
-    scoped.forEach(line => {
-        const m = line.match(re);
-        if (!m) return;
+    const re = /P\s*([1-6])\s*:\s*(\d+[\d\.,]*)\s*kwh\s*\*\s*(\d+[\d\.,]*)\s*€\s*\/\s*kwh/gi;
+    let m;
+    while ((m = re.exec(scoped)) !== null) {
         const period = Number(m[1]);
         const kwh = parseSpanishNumber(m[2]);
         const unitPriceKwh = parseSpanishNumber(m[3]);
         if (!byPeriod[period]) {
             byPeriod[period] = { period, kwh, unitPriceKwh };
         }
-    });
+    }
 
     return Object.values(byPeriod).sort((a, b) => a.period - b.period);
 }
 
 function extractPowerPeriodItems(text) {
-    const lines = String(text || '').split(/\r?\n/);
-    const sectionStart = lines.findIndex(l => /importe\s+por\s+potencia|facturaci[oó]n\s+por\s+potencia/i.test(l));
-    const sectionEnd = sectionStart >= 0
-        ? lines.slice(sectionStart + 1).findIndex(l => /facturaci[oó]n\s+por\s+energ[ií]a|importe\s+por\s+energ[ií]a/i.test(l))
-        : -1;
-
-    const scoped = sectionStart >= 0
-        ? lines.slice(sectionStart, sectionEnd >= 0 ? sectionStart + 1 + sectionEnd : sectionStart + 20)
-        : lines;
+    const raw = String(text || '');
+    const blockMatch = raw.match(/importe\s+por\s+potencia\s*:?([\s\S]{0,1200}?)(?:facturaci[oó]n\s+por\s+energ[ií]a|importe\s+por\s+energ[ií]a)/i);
+    const scoped = blockMatch ? blockMatch[1] : raw;
 
     const byPeriod = {};
-    const re = /P([1-6])\s*:\s*(\d+[\d\.,]*)\s*kw\s*\*\s*(\d+[\d\.,]*)\s*€\s*\/\s*kw/i;
-
-    scoped.forEach(line => {
-        const m = line.match(re);
-        if (!m) return;
+    const re = /P\s*([1-6])\s*:\s*(\d+[\d\.,]*)\s*kw\s*\*\s*(\d+[\d\.,]*)\s*€\s*\/\s*kw/gi;
+    let m;
+    while ((m = re.exec(scoped)) !== null) {
         const period = Number(m[1]);
         const kw = parseSpanishNumber(m[2]);
         const unitPriceKw = parseSpanishNumber(m[3]);
         if (!byPeriod[period]) {
             byPeriod[period] = { period, kw, unitPriceKw };
         }
-    });
+    }
 
     return Object.values(byPeriod).sort((a, b) => a.period - b.period);
 }
@@ -283,7 +267,7 @@ async function runExtractionIA(text, fileName) {
         }
 
         inv.consumptionItems = (inv.consumptionItems || inv.p1p6 || inv.periods || []).map(x => Number(x) || 0);
-        if (inv.consumptionItems.length === 0 && inv.energyPeriodItems.length > 0) {
+        if (inv.energyPeriodItems.length > 0) {
             const periods = [0, 0, 0, 0, 0, 0];
             inv.energyPeriodItems.forEach(item => {
                 periods[item.period - 1] = item.kwh;
