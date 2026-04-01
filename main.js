@@ -589,6 +589,16 @@ function openCompareView(index) {
     const compareSection = document.getElementById('comparison-results');
     if (!compareSection) return;
 
+    // Promedio del historial (excluyendo esta misma factura si está en db)
+    const history = dbInvoices.length ? dbInvoices : invoices;
+    const historyExcludingSelf = history.filter(h => h.invoiceNum !== inv.invoiceNum);
+
+    const avg = (field) => {
+        if (!historyExcludingSelf.length) return 0;
+        const sum = historyExcludingSelf.reduce((acc, item) => acc + parseFloat(item[field] || 0), 0);
+        return sum / historyExcludingSelf.length;
+    };
+
     const energy = parseFloat(inv.energyCost || inv.breakdown?.energyCost || 0);
     const power = parseFloat(inv.powerCost || inv.breakdown?.powerCost || 0);
     const others = parseFloat(inv.othersCost || inv.breakdown?.othersCost || 0);
@@ -600,28 +610,26 @@ function openCompareView(index) {
     const totalDetected = parseFloat(inv.total || inv.totalCalculated || 0);
 
     const computedTotal = energy + power + others + alquiler + reactive + iee + igic + iva;
-
     const totalToShow = totalDetected > 0 ? totalDetected : computedTotal;
 
     const html = `
         <h3>Comparativa para factura ${inv.invoiceNum || 'S/N'}</h3>
-        <p>Cliente: ${inv.clientName || 'Desconocido'}</p>
-        <p>Comercializadora: ${inv.comercializadora || 'N/D'}</p>
-        <p>Consumo total: ${inv.consumption?.toFixed(2) || '0'} kWh</p>
+        <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Comercializadora:</strong> ${inv.comercializadora || 'N/D'}</p>
+        <p><strong>Histórico (promedio)</strong> de ${historyExcludingSelf.length} factura(s):</p>
         <table class="modal-table">
-            <thead><tr><th>Concepto</th><th>Importe</th></tr></thead>
+            <thead><tr><th>Concepto</th><th>Factura actual</th><th>Promedio histórico</th></tr></thead>
             <tbody>
-                <tr><td>Coste energía</td><td>${formatCurrency(energy)}</td></tr>
-                <tr><td>Coste potencia</td><td>${formatCurrency(power)}</td></tr>
-                <tr><td>Otros costes</td><td>${formatCurrency(others)}</td></tr>
-                <tr><td>Alquiler</td><td>${formatCurrency(alquiler)}</td></tr>
-                <tr><td>Reactiva</td><td>${formatCurrency(reactive)}</td></tr>
-                <tr><td>IEE</td><td>${formatCurrency(iee)}</td></tr>
-                <tr><td>IGIC</td><td>${formatCurrency(igic)}</td></tr>
-                <tr><td>IVA</td><td>${formatCurrency(iva)}</td></tr>
-                <tr class="mirror-row-total"><td>Total (detectado)</td><td>${formatCurrency(totalDetected)}</td></tr>
-                <tr class="mirror-row-total"><td>Total (recalculado)</td><td>${formatCurrency(computedTotal)}</td></tr>
-                <tr class="mirror-row-total"><td>Total a mostrar</td><td>${formatCurrency(totalToShow)}</td></tr>
+                <tr><td>Coste energía</td><td>${formatCurrency(energy)}</td><td>${formatCurrency(avg('energyCost'))}</td></tr>
+                <tr><td>Coste potencia</td><td>${formatCurrency(power)}</td><td>${formatCurrency(avg('powerCost'))}</td></tr>
+                <tr><td>Otros costes</td><td>${formatCurrency(others)}</td><td>${formatCurrency(avg('othersCost'))}</td></tr>
+                <tr><td>Alquiler</td><td>${formatCurrency(alquiler)}</td><td>${formatCurrency(avg('alquiler'))}</td></tr>
+                <tr><td>Reactiva</td><td>${formatCurrency(reactive)}</td><td>${formatCurrency(avg('reactiveCost'))}</td></tr>
+                <tr><td>IEE</td><td>${formatCurrency(iee)}</td><td>${formatCurrency(avg('electricityTax'))}</td></tr>
+                <tr><td>IGIC</td><td>${formatCurrency(igic)}</td><td>${formatCurrency(avg('igicTax'))}</td></tr>
+                <tr><td>IVA</td><td>${formatCurrency(iva)}</td><td>${formatCurrency(avg('ivaTax'))}</td></tr>
+                <tr><td>Total detectado</td><td>${formatCurrency(totalDetected)}</td><td>${formatCurrency(avg('totalCalculated'))}</td></tr>
+                <tr><td>Total recalculado</td><td>${formatCurrency(computedTotal)}</td><td>${formatCurrency(avg('totalCalculated') || 0)}</td></tr>
+                <tr class="mirror-row-total"><td>Total a mostrar</td><td>${formatCurrency(totalToShow)}</td><td>-</td></tr>
             </tbody>
         </table>
     `;
