@@ -173,7 +173,14 @@ async function runExtractionIA(text, fileName) {
         let content = data.choices ? data.choices[0].message.content : data;
         let inv = typeof content === 'string' ? JSON.parse(content.replace(/```json\n?|```/g, '').trim()) : content;
 
-        // Cálculos automáticos con desglose completo
+        // Completar campos adicionales del JSON IA
+        inv.invoiceNum = inv.invoiceNum || inv.factura || inv.invoice || 'S/N';
+        inv.clientName = inv.clientName || inv.customerName || inv.cliente || 'Desconocido';
+        inv.comercializadora = inv.comercializadora || inv.provider || inv.vendedor || inv.company || 'N/D';
+        inv.supplyAddress = inv.supplyAddress || inv.address || inv.direccion || 'N/D';
+        inv.cups = inv.cups || inv.CUPS || 'N/D';
+        inv.period = inv.period || inv.periodo || 'N/D';
+
         inv.consumption = (inv.consumptionItems || []).reduce((a, b) => a + (parseFloat(b) || 0), 0);
 
         // En caso de que IA entregue totales directos
@@ -203,20 +210,6 @@ async function runExtractionIA(text, fileName) {
             totalFinal: inv.totalCalculated
         };
 
-        // Guardar desglose para mostrar
-        inv.breakdown = {
-            energyCost: parseFloat(inv.energyCost) || 0,
-            powerCost: parseFloat(inv.powerCost) || 0,
-            othersCost: parseFloat(inv.othersCost) || 0,
-            alquiler: parseFloat(inv.alquiler) || 0,
-            reactiveCost: parseFloat(inv.reactiveCost) || 0,
-            subtotalBase: subtotalBase,
-            iee: iee,
-            subtotalConIEE: subtotalConIEE,
-            iva: iva,
-            totalFinal: inv.totalCalculated
-        };
-
         console.log(`[Cálculo] Desglose para ${fileName}:`, inv.breakdown);
 
         inv.fileName = fileName;
@@ -235,6 +228,8 @@ function fallbackParseInvoiceText(text, fileName) {
         fileName,
         invoiceNum: 'S/N',
         clientName: 'Desconocido',
+        supplyAddress: 'N/D',
+        comercializadora: 'N/D',
         period: 'N/D',
         consumption: 0,
         energyCost: 0,
@@ -248,6 +243,18 @@ function fallbackParseInvoiceText(text, fileName) {
     const invoiceMatch = textLower.match(/factura\s*(?:n[º°]?|num|núm)?\s*[:\-]?\s*([a-z0-9\-]+)/i);
     if (invoiceMatch) {
         invoice.invoiceNum = invoiceMatch[1].toUpperCase();
+    }
+
+    // Extraer comercializadora
+    const comercializadoraMatch = textLower.match(/(?:comercializadora|vendedor|empresa)\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]+)/i);
+    if (comercializadoraMatch) {
+        invoice.comercializadora = comercializadoraMatch[1].trim();
+    }
+
+    // Extraer nombre de cliente
+    const clienteMatch = textLower.match(/(?:cliente|titular|nombre)\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]+)/i);
+    if (clienteMatch) {
+        invoice.clientName = clienteMatch[1].trim();
     }
 
     // Extraer consumo (kWh) mediante todos los valores kWh detectables y 'consumo total'
@@ -439,13 +446,14 @@ function renderAuditDashboard() {
         <tr>
             <td>
                 <strong>${inv.invoiceNum || 'S/N'}</strong><br>
-                <small>${inv.clientName || inv.fileName}</small>
+                <small>${inv.clientName || inv.fileName}</small><br>
+                <small style="color: #64748b;">${inv.comercializadora ? 'Comercializadora: ' + inv.comercializadora : ''}</small>
             </td>
             <td>${inv.period || 'N/D'}</td>
             <td class="text-right">${formatCurrency(inv.totalCalculated)}</td>
             <td class="text-right">
                  <button class="btn primary btn-sm" onclick="openDetailModalFromInvoices(${index})">Ver Detalle</button>
-                 <button class="btn primary btn-sm" onclick="switchView('compare-view')" style="margin-left: 0.25rem;">Ver Comparativa</button>
+                 <button class="btn primary btn-sm" onclick="openCompareView(${index})" style="margin-left: 0.25rem;">Ver Comparativa</button>
                  <button class="btn secondary btn-sm" onclick="deleteCurrentInvoice(${index})" style="margin-left: 0.5rem; background-color: #ef4444; color: white;">Eliminar</button>
             </td>
         </tr>
@@ -511,6 +519,7 @@ function buildInvoiceDetailTable(inv) {
     const rows = [
         ['Factura', inv.invoiceNum || 'S/N'],
         ['Cliente', inv.clientName || 'N/D'],
+        ['Comercializadora', inv.comercializadora || 'N/D'],
         ['Dirección suministro', inv.supplyAddress || 'N/D'],
         ['CUPS', inv.cups || 'N/D'],
         ['Periodo', inv.period || 'N/D'],
@@ -570,6 +579,36 @@ window.addEventListener('click', (event) => {
         closeDetailModal();
     }
 });
+
+function openCompareView(index) {
+    const inv = invoices[index];
+    if (!inv) return;
+
+    const compareSection = document.getElementById('comparison-results');
+    if (!compareSection) return;
+
+    const html = `
+        <h3>Comparativa para factura ${inv.invoiceNum || 'S/N'}</h3>
+        <p>Cliente: ${inv.clientName || 'Desconocido'}</p>
+        <p>Comercializadora: ${inv.comercializadora || 'N/D'}</p>
+        <table class="modal-table">
+            <thead><tr><th>Concepto</th><th>Importe</th></tr></thead>
+            <tbody>
+                <tr><td>Coste energía</td><td>${formatCurrency(inv.energyCost)}</td></tr>
+                <tr><td>Coste potencia</td><td>${formatCurrency(inv.powerCost)}</td></tr>
+                <tr><td>Otros costes</td><td>${formatCurrency(inv.othersCost)}</td></tr>
+                <tr><td>Alquiler</td><td>${formatCurrency(inv.alquiler)}</td></tr>
+                <tr><td>Reactiva</td><td>${formatCurrency(inv.reactiveCost)}</td></tr>
+                <tr><td>IEE</td><td>${formatCurrency(inv.electricityTax || inv.breakdown?.iee)}</td></tr>
+                <tr><td>IVA</td><td>${formatCurrency(inv.ivaTax || inv.breakdown?.iva)}</td></tr>
+                <tr><td>Total</td><td>${formatCurrency(inv.totalCalculated)}</td></tr>
+            </tbody>
+        </table>
+    `;
+
+    compareSection.innerHTML = html;
+    switchView('compare-view');
+}
 
 // ========================================================================
 // 9. FUNCIONES DE GESTIÓN DE HISTORIAL
