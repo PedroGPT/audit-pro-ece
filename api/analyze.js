@@ -28,10 +28,11 @@ export default async function handler(req, res) {
             body: JSON.stringify({
                 model: "gpt-4o-mini",
                 messages: [
-                    { role: "system", content: "Responde solo JSON: {invoiceNum, period, totalCalculated, clientName}" },
+                    { role: "system", content: "Eres un extractor de facturas electricas. Responde solo JSON valido, sin markdown ni texto extra. Debes devolver todos los campos solicitados por el usuario." },
                     { role: "user", content: prompt }
                 ],
-                response_format: { type: "json_object" }
+                response_format: { type: "json_object" },
+                temperature: 0
             })
         });
 
