@@ -387,7 +387,7 @@ async function runExtractionIA(text, fileName) {
                 comercializadora, electricityTax, igicTax, ivaTax, total,
                 consumptionItems (array de 6 números P1..P6),
                 energyPeriodItems (array [{period,kwh,unitPriceKwh}]),
-                powerPeriodItems (array [{period,kw,unitPriceKw}]),
+                powerPeriodItems (array [{period,kw,unitPriceKw,days}]) donde days son los dias del periodo de facturacion,
                 tollPeriodItems (array [{period,kwh,unitPriceKwh}]) del bloque "coste de peajes de transporte, distribución y cargos".
                 Incluye only JSON válido, sin explicaciones extra.
                 Texto: ${text.substring(0, 12000)}` 
@@ -418,7 +418,8 @@ async function runExtractionIA(text, fileName) {
         inv.powerPeriodItems = (inv.powerPeriodItems || []).map(item => ({
             period: parsePeriodValue(item.period ?? item.periodo ?? item.p),
             kw: firstPositiveNumber(item.kw, item.powerKw, item.potencia),
-            unitPriceKw: firstPositiveNumber(item.unitPriceKw, item.unitPrice, item.priceKw, item.price, item.precio)
+            unitPriceKw: firstPositiveNumber(item.unitPriceKw, item.unitPrice, item.priceKw, item.price, item.precio),
+            days: item.days || item.dias || item.numDays || null
         })).filter(item => item.period >= 1 && item.period <= 6);
 
         const tollFromIA = (inv.tollPeriodItems || inv.tollsPeriodItems || inv.peajesPeriodItems || []).map(item => ({
@@ -874,14 +875,67 @@ function buildInvoiceDetailTable(inv) {
         `;
     }).join('');
 
-    const powerDetailRows = (inv.powerPeriodItems || [])
+    // Inferir días del periodo de facturación si los items no los traen
+    const billingDays = (() => {
+        // Intentar sacar de los propios items
+        const fromItems = (inv.powerPeriodItems || []).map(i => Number(i.days || 0)).find(d => d > 0);
+        if (fromItems) return fromItems;
+        // Calcular desde el campo period de la factura (e.g. "01/01/2024 - 28/01/2024")
+        if (inv.period && inv.period.includes('-')) {
+            const parts = inv.period.split('-').map(s => s.trim());
+            if (parts.length === 2) {
+                const [d1, m1, y1] = (parts[0].includes('/') ? parts[0].split('/') : parts[0].split('.'));
+                const [d2, m2, y2] = (parts[1].includes('/') ? parts[1].split('/') : parts[1].split('.'));
+                const date1 = new Date(`${y1}-${m1}-${d1}`);
+                const date2 = new Date(`${y2}-${m2}-${d2}`);
+                const diff = Math.round((date2 - date1) / (1000 * 60 * 60 * 24));
+                if (diff > 0 && diff <= 365) return diff;
+            }
+        }
+        return null;
+    })();
+
+    const activePowerPeriods = (inv.powerPeriodItems || [])
         .filter(item => Number(item.kw || 0) > 0)
-        .sort((a, b) => a.period - b.period)
-        .map(item => {
-            const periodCost = Number(item.kw || 0) * Number(item.unitPriceKw || 0);
-            return `P${item.period}: ${item.kw.toFixed(2)} kW x ${item.unitPriceKw.toFixed(6)} €/kW = ${formatCurrency(periodCost)}`;
-        })
-        .join(' | ');
+        .sort((a, b) => a.period - b.period);
+
+    let totalPowerCalc = 0;
+    const powerTableRows = activePowerPeriods.map(item => {
+        const days = Number(item.days || billingDays || 0);
+        const amount = Number(item.kw || 0) * Number(item.unitPriceKw || 0) * (days || 1);
+        totalPowerCalc += amount;
+        const daysLabel = days ? days.toString() : '?';
+        return `
+            <tr>
+                <td>P${item.period}</td>
+                <td>${Number(item.kw).toFixed(2)} kW</td>
+                <td>${Number(item.unitPriceKw).toFixed(6)} €/kW</td>
+                <td>${daysLabel}</td>
+                <td>${formatCurrency(amount)}</td>
+            </tr>
+        `;
+    }).join('');
+
+    const powerNestedTable = activePowerPeriods.length > 0 ? `
+        <table class="modal-table" style="margin-top:0;">
+            <thead>
+                <tr>
+                    <th>Periodo</th>
+                    <th>kW</th>
+                    <th>€/kW</th>
+                    <th>Dias</th>
+                    <th>Importe</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${powerTableRows}
+                <tr style="font-weight:700; background:#f8fafc;">
+                    <td colspan="4" style="text-align:right;">Total potencia</td>
+                    <td>${formatCurrency(totalPowerCalc)}</td>
+                </tr>
+            </tbody>
+        </table>
+    ` : 'N/D';
 
     const nestedPeriodsTable = `
         <table class="modal-table" style="margin-top:0;">
@@ -920,7 +974,7 @@ function buildInvoiceDetailTable(inv) {
         ['Consumo por periodos (kWh)', (inv.consumptionItems && inv.consumptionItems.length > 0) ? inv.consumptionItems.map((v,o)=>`P${o+1}:${v.toFixed(2)}`).join(' | ') : 'N/D'],
         ['Detalle periodos (tabla)', nestedPeriodsTable],
         ['Coste potencia (factura)', formatCurrency(inv.powerCost)],
-        ['Detalle coste potencia por periodos', powerDetailRows || 'N/D'],
+        ['Detalle coste potencia por periodos', powerNestedTable],
         ['Otros costes', formatCurrency(inv.othersCost)],
         ['Alquiler', formatCurrency(inv.alquiler)],
         ['Reactiva', formatCurrency(inv.reactiveCost)],
