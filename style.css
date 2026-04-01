@@ -429,6 +429,19 @@ tr.adjustment-row:hover {
     margin-bottom: 1.5rem;
 }
 
+#detail-section {
+    background-color: var(--card-bg);
+    border-radius: 1rem;
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border-color);
+    padding: 1rem;
+    margin-top: 1rem;
+}
+
+#detail-content {
+    margin-top: 0.75rem;
+}
+
 .badge.danger {
     background-color: #fee2e2;
     color: #dc2626;

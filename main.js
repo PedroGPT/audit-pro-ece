@@ -577,11 +577,24 @@ function openDetailModal(inv) {
 function openDetailModalFromInvoices(index) {
     if (!invoices[index]) return;
     openDetailModal(invoices[index]);
+    renderInvoiceDetail(invoices[index]);
 }
 
 function openDetailModalFromHistory(index) {
     if (!dbInvoices[index]) return;
     openDetailModal(dbInvoices[index]);
+    renderInvoiceDetail(dbInvoices[index]);
+}
+
+function renderInvoiceDetail(inv) {
+    const section = document.getElementById('detail-section');
+    const content = document.getElementById('detail-content');
+    if (!section || !content) return;
+
+    section.classList.remove('hidden');
+    content.innerHTML = buildInvoiceDetailTable(inv);
+
+    console.log('[Detail] Mostrando detalle de factura', inv.invoiceNum);
 }
 
 function closeDetailModal() {
