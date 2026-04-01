@@ -158,9 +158,11 @@ async function runExtractionIA(text, fileName) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
                 engine: 'openai',
-                prompt: `Actúa como auditor energético. Extrae de este texto los siguientes campos en un JSON: 
-                invoiceNum, cups, period, clientName, powerCost, energyCost, othersCost, alquiler, reactiveCost, 
-                y un array 'consumptionItems' con 6 números para P1 a P6. Texto: ${text.substring(0, 6000)}` 
+                prompt: `Actúa como auditor energético. Extrae de este texto los siguientes campos en un JSON:
+                invoiceNum, cups, period, clientName, supplyAddress, powerCost, energyCost, othersCost, alquiler, reactiveCost,
+                electricityTax, igicTax, ivaTax, total, consumptionItems (array de 6 números P1..P6).
+                Incluye only JSON válido, sin explicaciones extra.
+                Texto: ${text.substring(0, 6000)}` 
             })
         });
 
@@ -173,20 +175,32 @@ async function runExtractionIA(text, fileName) {
         // Cálculos automáticos con desglose completo
         inv.consumption = (inv.consumptionItems || []).reduce((a, b) => a + (parseFloat(b) || 0), 0);
 
-        // Subtotal base (antes de impuestos)
-        const subtotalBase = (parseFloat(inv.energyCost) || 0) + (parseFloat(inv.powerCost) || 0) + (parseFloat(inv.othersCost) || 0) + (parseFloat(inv.alquiler) || 0) + (parseFloat(inv.reactiveCost) || 0);
+        // En caso de que IA entregue totales directos
+        inv.electricityTax = parseFloat(inv.electricityTax || 0);
+        inv.igicTax = parseFloat(inv.igicTax || 0);
+        inv.ivaTax = parseFloat(inv.ivaTax || 0);
 
-        // Aplicar IEE (Impuesto Especial Eléctrico) 5.11269%
-        const iee = subtotalBase * BOE.taxes.iee;
+        const baseFromCosts = (parseFloat(inv.energyCost) || 0) + (parseFloat(inv.powerCost) || 0) + (parseFloat(inv.othersCost) || 0) + (parseFloat(inv.alquiler) || 0) + (parseFloat(inv.reactiveCost) || 0);
 
-        // Subtotal con IEE
-        const subtotalConIEE = subtotalBase + iee;
+        // Si IA no entrega impuestos, calcular a partir de regla BOE
+        const iee = inv.electricityTax || baseFromCosts * BOE.taxes.iee;
+        const subtotalConIEE = baseFromCosts + iee;
+        const iva = inv.ivaTax || subtotalConIEE * BOE.taxes.iva;
 
-        // Aplicar IVA (21%)
-        const iva = subtotalConIEE * BOE.taxes.iva;
+        inv.totalCalculated = parseFloat(inv.total || 0) || subtotalConIEE + iva;
 
-        // Total final
-        inv.totalCalculated = subtotalConIEE + iva;
+        inv.breakdown = {
+            energyCost: parseFloat(inv.energyCost) || 0,
+            powerCost: parseFloat(inv.powerCost) || 0,
+            othersCost: parseFloat(inv.othersCost) || 0,
+            alquiler: parseFloat(inv.alquiler) || 0,
+            reactiveCost: parseFloat(inv.reactiveCost) || 0,
+            subtotalBase: baseFromCosts,
+            iee: iee,
+            subtotalConIEE: subtotalConIEE,
+            iva: iva,
+            totalFinal: inv.totalCalculated
+        };
 
         // Guardar desglose para mostrar
         inv.breakdown = {
@@ -277,6 +291,31 @@ function fallbackParseInvoiceText(text, fileName) {
     const periodMatch = textLower.match(/periodo\s*[:\-]?\s*([a-z0-9\s\-\/]+)/i);
     if (periodMatch) {
         invoice.period = periodMatch[1].trim();
+    }
+
+    const addressMatch = textLower.match(/direccion\s*de\s*suministro\s*[:\-]?\s*([a-z0-9\s\.,ºª\-]+)/i);
+    if (addressMatch) {
+        invoice.supplyAddress = addressMatch[1].trim();
+    }
+
+    const clientNameMatch = textLower.match(/(?:cliente|titular)\s*[:\-]?\s*([a-z\s\.,ñáéíóú]+)/i);
+    if (clientNameMatch) {
+        invoice.clientName = clientNameMatch[1].trim().replace(/\s+/g,' ');
+    }
+
+    const electricityTaxMatch = textLower.match(/impuesto\s*(?:de\s*electricidad|especial\s*eléctrico)\s*[:\-]?\s*€?\s*(\d+[\d\.,]+)/i);
+    if (electricityTaxMatch) {
+        invoice.electricityTax = Number(electricityTaxMatch[1].replace(/\./g, '').replace(/,/g, '.')) || invoice.electricityTax;
+    }
+
+    const igicTaxMatch = textLower.match(/(igic|impuesto\s*de\s*aplicación)\s*[:\-]?\s*€?\s*(\d+[\d\.,]+)/i);
+    if (igicTaxMatch) {
+        invoice.igicTax = Number(igicTaxMatch[2].replace(/\./g, '').replace(/,/g, '.')) || invoice.igicTax;
+    }
+
+    const ivaTaxMatch = textLower.match(/iva\s*[:\-]?\s*€?\s*(\d+[\d\.,]+)/i);
+    if (ivaTaxMatch) {
+        invoice.ivaTax = Number(ivaTaxMatch[1].replace(/\./g, '').replace(/,/g, '.')) || invoice.ivaTax;
     }
 
     // Si tenemos consumo y total, calcular precio medio y desglose fiscal
