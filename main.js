@@ -135,6 +135,7 @@ async function processFiles(files) {
             }
             console.log(`[Result] Datos extraídos:`, auditData);
             invoices.push(auditData);
+            saveToDatabase([auditData]);
             await cloudSync(auditData);
         } catch (e) {
             console.error(`[Fatal] Error crítico en archivo ${file.name}:`, e);
@@ -443,7 +444,8 @@ function renderAuditDashboard() {
             <td>${inv.period || 'N/D'}</td>
             <td class="text-right">${formatCurrency(inv.totalCalculated)}</td>
             <td class="text-right">
-                 <button class="btn primary btn-sm" onclick="switchView('compare-view')">Ver Comparativa</button>
+                 <button class="btn primary btn-sm" onclick="openDetailModalFromInvoices(${index})">Ver Detalle</button>
+                 <button class="btn primary btn-sm" onclick="switchView('compare-view')" style="margin-left: 0.25rem;">Ver Comparativa</button>
                  <button class="btn secondary btn-sm" onclick="deleteCurrentInvoice(${index})" style="margin-left: 0.5rem; background-color: #ef4444; color: white;">Eliminar</button>
             </td>
         </tr>
@@ -475,7 +477,7 @@ function renderHistory() {
     `;
 
     historyList.innerHTML = clearAllButton + dbInvoices.map((inv, index) => `
-        <div class="card" style="position: relative;">
+        <div class="card" style="position: relative; padding: 1rem; margin-bottom: 0.75rem;">
             <button class="btn" onclick="deleteHistoryItem(${index})" 
                     style="position: absolute; top: 0.5rem; right: 0.5rem; 
                            background-color: #ef4444; color: white; border: none; 
@@ -484,9 +486,16 @@ function renderHistory() {
                     title="Eliminar esta factura">
                 ×
             </button>
-            <strong>${inv.fileName || inv.invoiceNum || 'N/A'}</strong> - ${inv.period || 'Periodo desconocido'}
-            <br>Total: ${formatCurrency(inv.totalCalculated)} - Consumo: ${inv.consumption?.toFixed(2) || 0} kWh
-            <br><small style="color: #64748b;">Estado: ${inv._auditStatus || 'Procesado'}</small>
+            <div style="display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center;">
+                <div>
+                    <strong>${inv.fileName || inv.invoiceNum || 'N/A'}</strong> - ${inv.period || 'Periodo desconocido'}
+                    <br>Total: ${formatCurrency(inv.totalCalculated)} - Consumo: ${inv.consumption?.toFixed(2) || 0} kWh
+                    <br><small style="color: #64748b;">Estado: ${inv._auditStatus || 'Procesado'}</small>
+                </div>
+                <div>
+                    <button class="btn primary" onclick="openDetailModalFromHistory(${index})" style="font-size: 0.8rem;">Ver Detalle</button>
+                </div>
+            </div>
         </div>
     `).join('');
 }
@@ -497,6 +506,70 @@ function renderHistory() {
 function formatCurrency(a) { 
     return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(a || 0); 
 }
+
+function buildInvoiceDetailTable(inv) {
+    const rows = [
+        ['Factura', inv.invoiceNum || 'S/N'],
+        ['Cliente', inv.clientName || 'N/D'],
+        ['Dirección suministro', inv.supplyAddress || 'N/D'],
+        ['CUPS', inv.cups || 'N/D'],
+        ['Periodo', inv.period || 'N/D'],
+        ['Consumo total (kWh)', inv.consumption?.toFixed(2) || '0'],
+        ['Coste energía', formatCurrency(inv.energyCost)],
+        ['Coste potencia', formatCurrency(inv.powerCost)],
+        ['Otros costes', formatCurrency(inv.othersCost)],
+        ['Alquiler', formatCurrency(inv.alquiler)],
+        ['Reactiva', formatCurrency(inv.reactiveCost)],
+        ['Subtotal base', formatCurrency(inv.breakdown?.subtotalBase || 0)],
+        ['Impuesto electricidad', formatCurrency(inv.electricityTax || inv.breakdown?.iee || 0)],
+        ['IGIC', formatCurrency(inv.igicTax || 0)],
+        ['IVA', formatCurrency(inv.ivaTax || inv.breakdown?.iva || 0)],
+        ['Total calculado', formatCurrency(inv.totalCalculated)],
+        ['Estado', inv._auditStatus || 'N/D']
+    ];
+
+    let html = '<table class="modal-table"><tbody>';
+    rows.forEach(([label, value]) => {
+        html += `<tr><th>${label}</th><td>${value}</td></tr>`;
+    });
+    html += '</tbody></table>';
+
+    return html;
+}
+
+function openDetailModal(inv) {
+    const modal = document.getElementById('invoice-detail-modal');
+    const body = document.getElementById('modal-content-body');
+    if (!modal || !body) return;
+
+    body.innerHTML = buildInvoiceDetailTable(inv);
+    modal.classList.remove('hidden');
+}
+
+function openDetailModalFromInvoices(index) {
+    if (!invoices[index]) return;
+    openDetailModal(invoices[index]);
+}
+
+function openDetailModalFromHistory(index) {
+    if (!dbInvoices[index]) return;
+    openDetailModal(dbInvoices[index]);
+}
+
+function closeDetailModal() {
+    const modal = document.getElementById('invoice-detail-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+// Cerrar al clicar fuera
+window.addEventListener('click', (event) => {
+    const modal = document.getElementById('invoice-detail-modal');
+    if (!modal || modal.classList.contains('hidden')) return;
+    const content = modal.querySelector('.modal-content');
+    if (content && !content.contains(event.target)) {
+        closeDetailModal();
+    }
+});
 
 // ========================================================================
 // 9. FUNCIONES DE GESTIÓN DE HISTORIAL
