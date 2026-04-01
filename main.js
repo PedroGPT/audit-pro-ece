@@ -49,9 +49,11 @@ const BOE = {
         cargos: [0.028766, 0.019432, 0.009021, 0.004561, 0.003412, 0.002134]
     },
     taxes: {
-        iee: 0.0511269, // Impuesto Especial Eléctrico
-        iva: 1.21,      // IVA General 21%
-        ivaReducido: 1.10 // IVA 10%
+        iee: 0.0511269, // Impuesto Especial Eléctrico (5.11269%)
+        iva: 0.21,      // IVA General 21% (tasa)
+        ivaFactor: 1.21, // Multiplicador 1+IVA para usar en descuentos/recálculo inverso
+        ivaReducido: 0.10, // IVA reducido 10% (tasa)
+        ivaReducidoFactor: 1.10 // Multiplicador 1+IVA reducido
     },
     penalties: {
         reactiva: 0.041554, // Coste kVArh penalizable
@@ -168,9 +170,40 @@ async function runExtractionIA(text, fileName) {
         let content = data.choices ? data.choices[0].message.content : data;
         let inv = typeof content === 'string' ? JSON.parse(content.replace(/```json\n?|```/g, '').trim()) : content;
 
-        // Cálculos automáticos
+        // Cálculos automáticos con desglose completo
         inv.consumption = (inv.consumptionItems || []).reduce((a, b) => a + (parseFloat(b) || 0), 0);
-        inv.totalCalculated = (parseFloat(inv.energyCost) || 0) + (parseFloat(inv.powerCost) || 0) + (parseFloat(inv.othersCost) || 0);
+
+        // Subtotal base (antes de impuestos)
+        const subtotalBase = (parseFloat(inv.energyCost) || 0) + (parseFloat(inv.powerCost) || 0) + (parseFloat(inv.othersCost) || 0) + (parseFloat(inv.alquiler) || 0) + (parseFloat(inv.reactiveCost) || 0);
+
+        // Aplicar IEE (Impuesto Especial Eléctrico) 5.11269%
+        const iee = subtotalBase * BOE.taxes.iee;
+
+        // Subtotal con IEE
+        const subtotalConIEE = subtotalBase + iee;
+
+        // Aplicar IVA (21%)
+        const iva = subtotalConIEE * BOE.taxes.iva;
+
+        // Total final
+        inv.totalCalculated = subtotalConIEE + iva;
+
+        // Guardar desglose para mostrar
+        inv.breakdown = {
+            energyCost: parseFloat(inv.energyCost) || 0,
+            powerCost: parseFloat(inv.powerCost) || 0,
+            othersCost: parseFloat(inv.othersCost) || 0,
+            alquiler: parseFloat(inv.alquiler) || 0,
+            reactiveCost: parseFloat(inv.reactiveCost) || 0,
+            subtotalBase: subtotalBase,
+            iee: iee,
+            subtotalConIEE: subtotalConIEE,
+            iva: iva,
+            totalFinal: inv.totalCalculated
+        };
+
+        console.log(`[Cálculo] Desglose para ${fileName}:`, inv.breakdown);
+
         inv.fileName = fileName;
         inv._auditStatus = 'OK';
 
@@ -202,35 +235,41 @@ function fallbackParseInvoiceText(text, fileName) {
         invoice.invoiceNum = invoiceMatch[1].toUpperCase();
     }
 
-    // Extraer consumo (kWh) - múltiples patrones
-    const kwhPatterns = [
-        /(\d+[\d\.,]*)\s*kwh/i,
-        /consumo\s*[:\-]?\s*(\d+[\d\.,]*)/i,
-        /energía\s*activa\s*[:\-]?\s*(\d+[\d\.,]*)/i,
-        /total\s*consumo\s*[:\-]?\s*(\d+[\d\.,]*)/i
-    ];
+    // Extraer consumo (kWh) mediante todos los valores kWh detectables y 'consumo total'
+    const kwhMatches = [...textLower.matchAll(/(\d+[\d\.,]*)\s*kwh/gi)].map(m => Number(m[1].replace(/\./g, '').replace(/,/g, '.')) || 0);
+    const consumoTotalMatch = textLower.match(/consumo\s*(?:real\s*)?total\s*[:\-]?\s*(\d+[\d\.,]*)/i);
 
-    for (const pattern of kwhPatterns) {
-        const match = textLower.match(pattern);
-        if (match) {
-            invoice.consumption = Number(match[1].replace(/\./g, '').replace(/,/g, '.')) || 0;
-            break;
-        }
+    if (consumoTotalMatch) {
+        invoice.consumption = Number(consumoTotalMatch[1].replace(/\./g, '').replace(/,/g, '.')) || invoice.consumption;
+    } else if (kwhMatches.length > 0) {
+        // Sumar todos los kWh de los periodos (P1..P6) para mayor precisión
+        invoice.consumption = kwhMatches.reduce((a, b) => a + b, 0);
     }
 
-    // Extraer total factura - múltiples patrones
-    const totalPatterns = [
-        /total\s*(?:factura|importe)?\s*[:\-]?\s*€?\s*(\d+[\d\.,]*)/i,
-        /importe\s*total\s*[:\-]?\s*€?\s*(\d+[\d\.,]*)/i,
-        /a\s*pagar\s*[:\-]?\s*€?\s*(\d+[\d\.,]*)/i,
-        /total\s*a\s*pagar\s*[:\-]?\s*€?\s*(\d+[\d\.,]*)/i
-    ];
+    // Extraer total factura con criterio de prioridad: TOTAL IMPORTE FACTURA > TOTAL FACTURA > A PAGAR
+    const totalCandidates = [];
+    const totalPatternLines = textLower.match(/(?:total\s+importe\s+factura|total\s+factura|total\s+a\s+pagar|importe\s+total|a\s+pagar)[^\n]*?(\d+[\d\.,]*)/gi) || [];
+    totalPatternLines.forEach(line => {
+        const m = line.match(/(\d+[\d\.,]*)/);
+        if (m) totalCandidates.push(Number(m[1].replace(/\./g, '').replace(/,/g, '.')));
+    });
 
-    for (const pattern of totalPatterns) {
-        const match = textLower.match(pattern);
-        if (match) {
-            invoice.totalCalculated = Number(match[1].replace(/\./g, '').replace(/,/g, '.')) || 0;
-            break;
+    if (totalCandidates.length > 0) {
+        invoice.totalCalculated = Math.max(...totalCandidates);
+    } else {
+        // Fallback de regex más general
+        const totalPatterns = [
+            /total\s*(?:factura|importe)?\s*[:\-]?\s*€?\s*(\d+[\d\.,]*)/i,
+            /importe\s*total\s*[:\-]?\s*€?\s*(\d+[\d\.,]*)/i,
+            /a\s*pagar\s*[:\-]?\s*€?\s*(\d+[\d\.,]*)/i,
+            /total\s*a\s*pagar\s*[:\-]?\s*€?\s*(\d+[\d\.,]*)/i
+        ];
+        for (const pattern of totalPatterns) {
+            const match = textLower.match(pattern);
+            if (match) {
+                invoice.totalCalculated = Number(match[1].replace(/\./g, '').replace(/,/g, '.')) || 0;
+                break;
+            }
         }
     }
 
@@ -240,11 +279,38 @@ function fallbackParseInvoiceText(text, fileName) {
         invoice.period = periodMatch[1].trim();
     }
 
-    // Si tenemos consumo y total, calcular precio medio
+    // Si tenemos consumo y total, calcular precio medio y desglose fiscal
     if (invoice.consumption > 0 && invoice.totalCalculated > 0) {
-        invoice.energyCost = invoice.totalCalculated * 0.8; // Aproximadamente 80% energía
-        invoice.powerCost = invoice.totalCalculated * 0.15;  // 15% potencia
-        invoice.othersCost = invoice.totalCalculated * 0.05;  // 5% otros
+        // Si el total no se ha extraído, estimar con precio medio
+        if (invoice.totalCalculated === 0) {
+            invoice.totalCalculated = invoice.consumption * 0.25;
+        }
+
+        // Quitar impuestos al total extraído para obtener la base aproximada
+        const subtotalBase = invoice.totalCalculated / BOE.taxes.ivaFactor / (1 + BOE.taxes.iee);
+        const iee = subtotalBase * BOE.taxes.iee;
+        const subtotalConIEE = subtotalBase + iee;
+        const iva = subtotalConIEE * BOE.taxes.iva;
+
+        invoice.breakdown = {
+            energyCost: subtotalBase * 0.7,
+            powerCost: subtotalBase * 0.2,
+            othersCost: subtotalBase * 0.1,
+            alquiler: 0,
+            reactiveCost: 0,
+            subtotalBase: subtotalBase,
+            iee: iee,
+            subtotalConIEE: subtotalConIEE,
+            iva: iva,
+            totalFinal: subtotalConIEE + iva
+        };
+
+        invoice.energyCost = invoice.breakdown.energyCost;
+        invoice.powerCost = invoice.breakdown.powerCost;
+        invoice.othersCost = invoice.breakdown.othersCost;
+
+        // Usar total calculado con coherencia fiscal
+        invoice.totalCalculated = invoice.breakdown.totalFinal;
     }
 
     console.log(`[Fallback] Extraído de ${fileName}: consumo=${invoice.consumption}, total=${invoice.totalCalculated}`);
