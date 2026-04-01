@@ -193,10 +193,18 @@ async function runExtractionIA(text, fileName) {
         // Si IA no entrega impuestos, calcular a partir de regla BOE
         const iee = inv.electricityTax || baseFromCosts * BOE.taxes.iee;
         const subtotalConIEE = baseFromCosts + iee;
-        const iva = inv.ivaTax || subtotalConIEE * BOE.taxes.iva;
+
+        // Canarias: prioriza IGIC. Península: IVA.
+        const isCanarias = inv.igicTax > 0 || /canarias/i.test(`${inv.supplyAddress || ''} ${inv.comercializadora || ''}`);
+        const igic = inv.igicTax || 0;
+        const iva = isCanarias ? 0 : (inv.ivaTax || subtotalConIEE * BOE.taxes.iva);
+        const taxName = isCanarias ? 'IGIC' : 'IVA';
+        const taxValue = isCanarias ? igic : iva;
 
         inv.total = parseFloat(inv.total || 0);
-        inv.totalCalculated = inv.total > 0 ? inv.total : subtotalConIEE + iva;
+        inv.totalCalculated = inv.total > 0 ? inv.total : subtotalConIEE + taxValue;
+        inv.taxName = taxName;
+        inv.taxValue = taxValue;
 
         inv.breakdown = {
             energyCost: parseFloat(inv.energyCost) || 0,
@@ -207,7 +215,9 @@ async function runExtractionIA(text, fileName) {
             subtotalBase: baseFromCosts,
             iee: iee,
             subtotalConIEE: subtotalConIEE,
-            igic: inv.igicTax || 0,
+            taxName: taxName,
+            taxAmount: taxValue,
+            igic: igic,
             iva: iva,
             totalFinal: inv.totalCalculated
         };
@@ -339,7 +349,11 @@ function fallbackParseInvoiceText(text, fileName) {
         const subtotalBase = invoice.totalCalculated / BOE.taxes.ivaFactor / (1 + BOE.taxes.iee);
         const iee = subtotalBase * BOE.taxes.iee;
         const subtotalConIEE = subtotalBase + iee;
-        const iva = subtotalConIEE * BOE.taxes.iva;
+        const isCanarias = invoice.igicTax > 0 || /canarias/i.test(`${invoice.supplyAddress || ''} ${invoice.comercializadora || ''}`);
+        const igic = invoice.igicTax || 0;
+        const iva = isCanarias ? 0 : subtotalConIEE * BOE.taxes.iva;
+        const taxName = isCanarias ? 'IGIC' : 'IVA';
+        const taxAmount = isCanarias ? igic : iva;
 
         invoice.breakdown = {
             energyCost: subtotalBase * 0.7,
@@ -350,8 +364,11 @@ function fallbackParseInvoiceText(text, fileName) {
             subtotalBase: subtotalBase,
             iee: iee,
             subtotalConIEE: subtotalConIEE,
+            taxName: taxName,
+            taxAmount: taxAmount,
+            igic: igic,
             iva: iva,
-            totalFinal: subtotalConIEE + iva
+            totalFinal: subtotalConIEE + taxAmount
         };
 
         invoice.energyCost = invoice.breakdown.energyCost;
@@ -533,8 +550,8 @@ function buildInvoiceDetailTable(inv) {
         ['Reactiva', formatCurrency(inv.reactiveCost)],
         ['Subtotal base', formatCurrency(inv.breakdown?.subtotalBase || 0)],
         ['Impuesto electricidad', formatCurrency(inv.electricityTax || inv.breakdown?.iee || 0)],
-        ['IGIC', formatCurrency(inv.igicTax || 0)],
-        ['IVA', formatCurrency(inv.ivaTax || inv.breakdown?.iva || 0)],
+        ['Tipo de impuesto', inv.taxName || (inv.igicTax ? 'IGIC' : inv.ivaTax ? 'IVA' : 'N/D')],
+        ['Importe impuesto', formatCurrency(inv.taxValue || inv.breakdown?.taxAmount || 0)],
         ['Total calculado', formatCurrency(inv.totalCalculated)],
         ['Estado', inv._auditStatus || 'N/D']
     ];
@@ -611,6 +628,8 @@ function openCompareView(index) {
 
     const computedTotal = energy + power + others + alquiler + reactive + iee + igic + iva;
     const totalToShow = totalDetected > 0 ? totalDetected : computedTotal;
+    const impuestoLabel = inv.taxName || (igic > 0 ? 'IGIC' : 'IVA');
+    const impuestoValor = parseFloat(inv.taxValue || inv.breakdown?.taxAmount || (igic > 0 ? igic : iva));
 
     const html = `
         <h3>Comparativa para factura ${inv.invoiceNum || 'S/N'}</h3>
@@ -625,8 +644,7 @@ function openCompareView(index) {
                 <tr><td>Alquiler</td><td>${formatCurrency(alquiler)}</td><td>${formatCurrency(avg('alquiler'))}</td></tr>
                 <tr><td>Reactiva</td><td>${formatCurrency(reactive)}</td><td>${formatCurrency(avg('reactiveCost'))}</td></tr>
                 <tr><td>IEE</td><td>${formatCurrency(iee)}</td><td>${formatCurrency(avg('electricityTax'))}</td></tr>
-                <tr><td>IGIC</td><td>${formatCurrency(igic)}</td><td>${formatCurrency(avg('igicTax'))}</td></tr>
-                <tr><td>IVA</td><td>${formatCurrency(iva)}</td><td>${formatCurrency(avg('ivaTax'))}</td></tr>
+                <tr><td>${impuestoLabel}</td><td>${formatCurrency(impuestoValor)}</td><td>${formatCurrency(avg(impuestoLabel === 'IGIC' ? 'igicTax' : 'ivaTax'))}</td></tr>
                 <tr><td>Total detectado</td><td>${formatCurrency(totalDetected)}</td><td>${formatCurrency(avg('totalCalculated'))}</td></tr>
                 <tr><td>Total recalculado</td><td>${formatCurrency(computedTotal)}</td><td>${formatCurrency(avg('totalCalculated') || 0)}</td></tr>
                 <tr class="mirror-row-total"><td>Total a mostrar</td><td>${formatCurrency(totalToShow)}</td><td>-</td></tr>
