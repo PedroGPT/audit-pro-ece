@@ -126,19 +126,31 @@ function detectComercializadoraFromText(text) {
 }
 
 function extractEnergyPeriodItems(text) {
-    const raw = String(text || '');
-    const blockMatch = raw.match(/importe\s+por\s+energ[ií]a\s+consumida\s*:?([\s\S]{0,2000}?)(?:coste\s+de\s+peajes|alquiler|otros\s+conceptos|impuesto\s+de\s+electricidad)/i);
-    const scoped = blockMatch ? blockMatch[1] : raw;
-
+    const raw = String(text || '').replace(/×/g, '*').replace(/x/g, '*');
     const byPeriod = {};
-    const re = /P\s*([1-6])\s*:\s*(\d+[\d\.,]*)\s*kwh\s*\*\s*(\d+[\d\.,]*)\s*€\s*\/\s*kwh/gi;
+
+    // Prioridad 1: patrón completo Pn: xxx kWh * yyy €/kWh
+    const fullRe = /P\s*([1-6])\s*:\s*(\d+[\d\.,]*)\s*kwh\s*[*]\s*(\d+[\d\.,]*)\s*(?:€\s*)?\/?\s*kwh/gi;
     let m;
-    while ((m = re.exec(scoped)) !== null) {
+    while ((m = fullRe.exec(raw)) !== null) {
         const period = Number(m[1]);
         const kwh = parseSpanishNumber(m[2]);
         const unitPriceKwh = parseSpanishNumber(m[3]);
-        if (!byPeriod[period]) {
-            byPeriod[period] = { period, kwh, unitPriceKwh };
+        byPeriod[period] = { period, kwh, unitPriceKwh };
+    }
+
+    // Prioridad 2: OCR roto (buscar Pn y luego kWh/precio en ventana cercana)
+    if (Object.keys(byPeriod).length === 0) {
+        const pRe = /P\s*([1-6])\s*:/gi;
+        let pMatch;
+        while ((pMatch = pRe.exec(raw)) !== null) {
+            const period = Number(pMatch[1]);
+            const window = raw.slice(pMatch.index, pMatch.index + 140);
+            const kwhMatch = window.match(/(\d+[\d\.,]*)\s*kwh/i);
+            const priceMatch = window.match(/(\d+[\d\.,]*)\s*(?:€\s*)?\/?\s*kwh/i);
+            const kwh = kwhMatch ? parseSpanishNumber(kwhMatch[1]) : 0;
+            const unitPriceKwh = priceMatch ? parseSpanishNumber(priceMatch[1]) : 0;
+            if (kwh > 0) byPeriod[period] = { period, kwh, unitPriceKwh };
         }
     }
 
@@ -146,20 +158,15 @@ function extractEnergyPeriodItems(text) {
 }
 
 function extractPowerPeriodItems(text) {
-    const raw = String(text || '');
-    const blockMatch = raw.match(/importe\s+por\s+potencia\s*:?([\s\S]{0,1200}?)(?:facturaci[oó]n\s+por\s+energ[ií]a|importe\s+por\s+energ[ií]a)/i);
-    const scoped = blockMatch ? blockMatch[1] : raw;
-
+    const raw = String(text || '').replace(/×/g, '*').replace(/x/g, '*');
     const byPeriod = {};
-    const re = /P\s*([1-6])\s*:\s*(\d+[\d\.,]*)\s*kw\s*\*\s*(\d+[\d\.,]*)\s*€\s*\/\s*kw/gi;
+    const re = /P\s*([1-6])\s*:\s*(\d+[\d\.,]*)\s*kw\s*[*]\s*(\d+[\d\.,]*)\s*(?:€\s*)?\/?\s*kw/gi;
     let m;
-    while ((m = re.exec(scoped)) !== null) {
+    while ((m = re.exec(raw)) !== null) {
         const period = Number(m[1]);
         const kw = parseSpanishNumber(m[2]);
         const unitPriceKw = parseSpanishNumber(m[3]);
-        if (!byPeriod[period]) {
-            byPeriod[period] = { period, kw, unitPriceKw };
-        }
+        byPeriod[period] = { period, kw, unitPriceKw };
     }
 
     return Object.values(byPeriod).sort((a, b) => a.period - b.period);
@@ -261,9 +268,15 @@ async function runExtractionIA(text, fileName) {
 
         if (inv.energyPeriodItems.length === 0) {
             inv.energyPeriodItems = extractEnergyPeriodItems(text);
+            inv._energyPeriodsSource = inv.energyPeriodItems.length > 0 ? 'regex' : 'none';
+        } else {
+            inv._energyPeriodsSource = 'openai';
         }
         if (inv.powerPeriodItems.length === 0) {
             inv.powerPeriodItems = extractPowerPeriodItems(text);
+            inv._powerPeriodsSource = inv.powerPeriodItems.length > 0 ? 'regex' : 'none';
+        } else {
+            inv._powerPeriodsSource = 'openai';
         }
 
         inv.consumptionItems = (inv.consumptionItems || inv.p1p6 || inv.periods || []).map(x => Number(x) || 0);
@@ -348,6 +361,8 @@ function fallbackParseInvoiceText(text, fileName) {
 
     invoice.energyPeriodItems = extractEnergyPeriodItems(text);
     invoice.powerPeriodItems = extractPowerPeriodItems(text);
+    invoice._energyPeriodsSource = invoice.energyPeriodItems.length > 0 ? 'regex' : 'none';
+    invoice._powerPeriodsSource = invoice.powerPeriodItems.length > 0 ? 'regex' : 'none';
 
     // Extraer número de factura
     const invoiceMatch = textLower.match(/factura\s*(?:n[º°]?|num|núm)?\s*[:\-]?\s*([a-z0-9\-]+)/i);
