@@ -218,7 +218,7 @@ async function runExtractionIA(text, fileName) {
             iee: iee,
             subtotalConIEE: subtotalConIEE,
             taxName: taxName,
-            taxAmount: taxAmount,
+            taxAmount: taxValue,
             igic: igic,
             iva: iva,
             totalFinal: inv.totalCalculated,
@@ -281,6 +281,9 @@ function fallbackParseInvoiceText(text, fileName) {
     } else if (kwhMatches.length > 0) {
         // Sumar todos los kWh de los periodos (P1..P6) para mayor precisión
         invoice.consumptionItems = kwhMatches;
+        invoice.consumption = kwhMatches.reduce((a, b) => a + b, 0);
+    }
+
     // Extraer total factura con criterio de prioridad: TOTAL IMPORTE FACTURA > TOTAL FACTURA > A PAGAR
     const totalCandidates = [];
     const totalPatternLines = textLower.match(/(?:total\s+importe\s+factura|total\s+factura|total\s+a\s+pagar|importe\s+total|a\s+pagar)[^\n]*?(\d+[\d\.,]*)/gi) || [];
