@@ -136,7 +136,10 @@ function extractEnergyPeriodItems(text) {
         const period = Number(m[1]);
         const kwh = parseSpanishNumber(m[2]);
         const unitPriceKwh = parseSpanishNumber(m[3]);
-        byPeriod[period] = { period, kwh, unitPriceKwh };
+        // Mantener la primera aparición (normalmente "importe por energía consumida")
+        if (!byPeriod[period]) {
+            byPeriod[period] = { period, kwh, unitPriceKwh };
+        }
     }
 
     // Prioridad 2: OCR roto (buscar Pn y luego kWh/precio en ventana cercana)
@@ -151,6 +154,26 @@ function extractEnergyPeriodItems(text) {
             const kwh = kwhMatch ? parseSpanishNumber(kwhMatch[1]) : 0;
             const unitPriceKwh = priceMatch ? parseSpanishNumber(priceMatch[1]) : 0;
             if (kwh > 0) byPeriod[period] = { period, kwh, unitPriceKwh };
+        }
+    }
+
+    return Object.values(byPeriod).sort((a, b) => a.period - b.period);
+}
+
+function extractTollPeriodItems(text) {
+    const raw = String(text || '').replace(/×/g, '*').replace(/x/g, '*');
+    const blockMatch = raw.match(/coste\s+de\s+peajes\s+de\s+transporte,\s*distribuci[oó]n\s+y\s+cargos\s*:?([\s\S]{0,1200}?)(?:alquiler|otros\s+conceptos|impuesto\s+de\s+electricidad)/i);
+    const scoped = blockMatch ? blockMatch[1] : '';
+
+    const byPeriod = {};
+    const re = /P\s*([1-6])\s*:\s*(\d+[\d\.,]*)\s*kwh\s*[*]\s*(\d+[\d\.,]*)\s*(?:€\s*)?\/?\s*kwh/gi;
+    let m;
+    while ((m = re.exec(scoped)) !== null) {
+        const period = Number(m[1]);
+        const kwh = parseSpanishNumber(m[2]);
+        const unitPriceKwh = parseSpanishNumber(m[3]);
+        if (!byPeriod[period]) {
+            byPeriod[period] = { period, kwh, unitPriceKwh };
         }
     }
 
@@ -278,6 +301,7 @@ async function runExtractionIA(text, fileName) {
         } else {
             inv._powerPeriodsSource = 'openai';
         }
+        inv.tollPeriodItems = extractTollPeriodItems(text);
 
         inv.consumptionItems = (inv.consumptionItems || inv.p1p6 || inv.periods || []).map(x => Number(x) || 0);
         if (inv.energyPeriodItems.length > 0) {
@@ -361,6 +385,7 @@ function fallbackParseInvoiceText(text, fileName) {
 
     invoice.energyPeriodItems = extractEnergyPeriodItems(text);
     invoice.powerPeriodItems = extractPowerPeriodItems(text);
+    invoice.tollPeriodItems = extractTollPeriodItems(text);
     invoice._energyPeriodsSource = invoice.energyPeriodItems.length > 0 ? 'regex' : 'none';
     invoice._powerPeriodsSource = invoice.powerPeriodItems.length > 0 ? 'regex' : 'none';
 
@@ -665,6 +690,29 @@ function buildInvoiceDetailTable(inv) {
         ? inv.powerPeriodItems.map(item => `P${item.period}: ${item.kw.toFixed(2)} kW @ ${item.unitPriceKw.toFixed(6)} €/kW`).join(' | ')
         : 'N/D';
 
+    const periodTableRows = [1, 2, 3, 4, 5, 6].map(period => {
+        const e = (inv.energyPeriodItems || []).find(x => x.period === period);
+        const t = (inv.tollPeriodItems || []).find(x => x.period === period);
+        const kwh = e ? `${e.kwh.toFixed(2)} kWh` : '-';
+        const energyPrice = e ? `${e.unitPriceKwh.toFixed(6)} €/kWh` : '-';
+        const tollPrice = t ? `${t.unitPriceKwh.toFixed(6)} €/kWh` : '-';
+        return `<tr><td>P${period}</td><td>${kwh}</td><td>${energyPrice}</td><td>${tollPrice}</td></tr>`;
+    }).join('');
+
+    const nestedPeriodsTable = `
+        <table class="modal-table" style="margin-top:0;">
+            <thead>
+                <tr>
+                    <th>Periodo</th>
+                    <th>Consumo</th>
+                    <th>Precio energía</th>
+                    <th>Precio peajes/cargos</th>
+                </tr>
+            </thead>
+            <tbody>${periodTableRows}</tbody>
+        </table>
+    `;
+
     const rows = [
         ['Factura', inv.invoiceNum || 'S/N'],
         ['Cliente', inv.clientName || 'N/D'],
@@ -674,6 +722,7 @@ function buildInvoiceDetailTable(inv) {
         ['Periodo', inv.period || 'N/D'],
         ['Consumo total (kWh)', inv.consumption?.toFixed(2) || '0'],
         ['Consumo por periodos (kWh)', (inv.consumptionItems && inv.consumptionItems.length > 0) ? inv.consumptionItems.map((v,o)=>`P${o+1}:${v.toFixed(2)}`).join(' | ') : 'N/D'],
+        ['Detalle periodos (tabla)', nestedPeriodsTable],
         ['Energía por periodo', energyPeriodsText],
         ['Potencia por periodo', powerPeriodsText],
         ['Precio medio energía', `${(inv.energyUnitPriceAvg || 0).toFixed(6)} €/kWh`],
