@@ -854,8 +854,9 @@ function buildInvoiceDetailTable(inv) {
     let totalTollsCalc = 0;
     const periodTableRows = energyPeriodsWithConsumption.map(e => {
         const t = (inv.tollPeriodItems || []).find(x => x.period === e.period);
+        const tollUnitPrice = Number(t?.unitPriceKwh || 0);
         const energyAmount = Number(e.kwh || 0) * Number(e.unitPriceKwh || 0);
-        const tollAmount = Number(e.kwh || 0) * Number(t?.unitPriceKwh || 0);
+        const tollAmount = Number(e.kwh || 0) * tollUnitPrice;
         const periodTotal = energyAmount + tollAmount;
         totalEnergyCalc += energyAmount;
         totalTollsCalc += tollAmount;
@@ -866,7 +867,7 @@ function buildInvoiceDetailTable(inv) {
                 <td>${e.kwh.toFixed(2)} kWh</td>
                 <td>${e.unitPriceKwh.toFixed(6)} €/kWh</td>
                 <td>${formatCurrency(energyAmount)}</td>
-                <td>${t ? `${t.unitPriceKwh.toFixed(6)} €/kWh` : '-'}</td>
+                <td>${tollUnitPrice.toFixed(6)} €/kWh</td>
                 <td>${formatCurrency(tollAmount)}</td>
                 <td>${formatCurrency(periodTotal)}</td>
             </tr>
