@@ -176,11 +176,13 @@ async function runExtractionIA(text, fileName) {
         // Completar campos adicionales del JSON IA
         inv.invoiceNum = inv.invoiceNum || inv.factura || inv.invoice || 'S/N';
         inv.clientName = inv.clientName || inv.customerName || inv.cliente || 'Desconocido';
-        inv.comercializadora = inv.comercializadora || inv.provider || inv.vendedor || inv.company || 'N/D';
+        inv.comercializadora = inv.comercializadora || inv.provider || inv.vendedor || inv.company || inv.distribuidora || inv.operador || 'N/D';
         inv.supplyAddress = inv.supplyAddress || inv.address || inv.direccion || 'N/D';
         inv.cups = inv.cups || inv.CUPS || 'N/D';
         inv.period = inv.period || inv.periodo || 'N/D';
 
+        // Si el modelo da items por periodo guardarlos
+        inv.consumptionItems = (inv.consumptionItems || inv.p1p6 || inv.periods || []).map(x => Number(x) || 0);
         inv.consumption = (inv.consumptionItems || []).reduce((a, b) => a + (parseFloat(b) || 0), 0);
 
         // En caso de que IA entregue totales directos
@@ -216,10 +218,11 @@ async function runExtractionIA(text, fileName) {
             iee: iee,
             subtotalConIEE: subtotalConIEE,
             taxName: taxName,
-            taxAmount: taxValue,
+            taxAmount: taxAmount,
             igic: igic,
             iva: iva,
-            totalFinal: inv.totalCalculated
+            totalFinal: inv.totalCalculated,
+            consumptionItems: inv.consumptionItems || []
         };
 
         console.log(`[Cálculo] Desglose para ${fileName}:`, inv.breakdown);
@@ -277,9 +280,7 @@ function fallbackParseInvoiceText(text, fileName) {
         invoice.consumption = Number(consumoTotalMatch[1].replace(/\./g, '').replace(/,/g, '.')) || invoice.consumption;
     } else if (kwhMatches.length > 0) {
         // Sumar todos los kWh de los periodos (P1..P6) para mayor precisión
-        invoice.consumption = kwhMatches.reduce((a, b) => a + b, 0);
-    }
-
+        invoice.consumptionItems = kwhMatches;
     // Extraer total factura con criterio de prioridad: TOTAL IMPORTE FACTURA > TOTAL FACTURA > A PAGAR
     const totalCandidates = [];
     const totalPatternLines = textLower.match(/(?:total\s+importe\s+factura|total\s+factura|total\s+a\s+pagar|importe\s+total|a\s+pagar)[^\n]*?(\d+[\d\.,]*)/gi) || [];
@@ -543,6 +544,7 @@ function buildInvoiceDetailTable(inv) {
         ['CUPS', inv.cups || 'N/D'],
         ['Periodo', inv.period || 'N/D'],
         ['Consumo total (kWh)', inv.consumption?.toFixed(2) || '0'],
+        ['Consumo por periodos (kWh)', (inv.consumptionItems && inv.consumptionItems.length > 0) ? inv.consumptionItems.map((v,o)=>`P${o+1}:${v.toFixed(2)}`).join(' | ') : 'N/D'],
         ['Coste energía', formatCurrency(inv.energyCost)],
         ['Coste potencia', formatCurrency(inv.powerCost)],
         ['Otros costes', formatCurrency(inv.othersCost)],
