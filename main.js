@@ -310,9 +310,10 @@ async function runExtractionIA(text, fileName) {
                 comercializadora, electricityTax, igicTax, ivaTax, total,
                 consumptionItems (array de 6 números P1..P6),
                 energyPeriodItems (array [{period,kwh,unitPriceKwh}]),
-                powerPeriodItems (array [{period,kw,unitPriceKw}]).
+                powerPeriodItems (array [{period,kw,unitPriceKw}]),
+                tollPeriodItems (array [{period,kwh,unitPriceKwh}]) del bloque "coste de peajes de transporte, distribución y cargos".
                 Incluye only JSON válido, sin explicaciones extra.
-                Texto: ${text.substring(0, 6000)}` 
+                Texto: ${text.substring(0, 12000)}` 
             })
         });
 
@@ -343,6 +344,12 @@ async function runExtractionIA(text, fileName) {
             unitPriceKw: parseSpanishNumber(item.unitPriceKw)
         })).filter(item => item.period >= 1 && item.period <= 6);
 
+        const tollFromIA = (inv.tollPeriodItems || inv.tollsPeriodItems || inv.peajesPeriodItems || []).map(item => ({
+            period: Number(item.period) || 0,
+            kwh: parseSpanishNumber(item.kwh),
+            unitPriceKwh: parseSpanishNumber(item.unitPriceKwh)
+        })).filter(item => item.period >= 1 && item.period <= 6);
+
         if (inv.energyPeriodItems.length === 0) {
             inv.energyPeriodItems = extractEnergyPeriodItems(text);
             inv._energyPeriodsSource = inv.energyPeriodItems.length > 0 ? 'regex' : 'none';
@@ -355,7 +362,14 @@ async function runExtractionIA(text, fileName) {
         } else {
             inv._powerPeriodsSource = 'openai';
         }
-        inv.tollPeriodItems = extractTollPeriodItems(text);
+
+        if (tollFromIA.length > 0) {
+            inv.tollPeriodItems = tollFromIA;
+            inv._tollPeriodsSource = 'openai';
+        } else {
+            inv.tollPeriodItems = extractTollPeriodItems(text);
+            inv._tollPeriodsSource = inv.tollPeriodItems.length > 0 ? 'regex' : 'none';
+        }
 
         inv.consumptionItems = (inv.consumptionItems || inv.p1p6 || inv.periods || []).map(x => Number(x) || 0);
         if (inv.energyPeriodItems.length > 0) {
@@ -442,6 +456,7 @@ function fallbackParseInvoiceText(text, fileName) {
     invoice.tollPeriodItems = extractTollPeriodItems(text);
     invoice._energyPeriodsSource = invoice.energyPeriodItems.length > 0 ? 'regex' : 'none';
     invoice._powerPeriodsSource = invoice.powerPeriodItems.length > 0 ? 'regex' : 'none';
+    invoice._tollPeriodsSource = invoice.tollPeriodItems.length > 0 ? 'regex' : 'none';
 
     // Extraer número de factura
     const invoiceMatch = textLower.match(/factura\s*(?:n[º°]?|num|núm)?\s*[:\-]?\s*([a-z0-9\-]+)/i);
@@ -821,6 +836,7 @@ function buildInvoiceDetailTable(inv) {
         ['Precio medio energía', `${(inv.energyUnitPriceAvg || 0).toFixed(6)} €/kWh`],
         ['Coste energía (detalle periodos)', `${formatCurrency(totalEnergyCalc)} + peajes ${formatCurrency(totalTollsCalc)} = ${formatCurrency(totalEnergyCalc + totalTollsCalc)}`],
         ['Coste energía (factura)', formatCurrency(inv.energyCost)],
+        ['Fuente peajes por periodo', inv._tollPeriodsSource || 'none'],
         ['Coste potencia (factura)', formatCurrency(inv.powerCost)],
         ['Detalle coste potencia por periodos', powerDetailRows || 'N/D'],
         ['Otros costes', formatCurrency(inv.othersCost)],
