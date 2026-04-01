@@ -1,4 +1,4 @@
-/**
+﻿/**
  * AUDIT PRO ENERGÍA - SISTEMA INTEGRAL DE AUDITORÍA ELÉCTRICA
  * Versión Profesional Completa - Restauración de Ingeniería
  * -----------------------------------------------------------
@@ -162,11 +162,11 @@ function extractEnergyPeriodItems(text) {
 
 function extractTollPeriodItems(text) {
     const raw = String(text || '').replace(/×/g, '*').replace(/x/g, '*');
-    const blockMatch = raw.match(/coste\s+de\s+peajes\s+de\s+transporte,\s*distribuci[oó]n\s+y\s+cargos\s*:?([\s\S]{0,1200}?)(?:alquiler|otros\s+conceptos|impuesto\s+de\s+electricidad)/i);
-    const scoped = blockMatch ? blockMatch[1] : '';
+    const blockMatch = raw.match(/coste\s+de\s+peajes\s+de\s+transporte\s*,?\s*distribuci[oó]n\s+y\s+cargos?\s*:?([\s\S]{0,2200}?)(?:alquiler|otros\s+conceptos|impuesto\s+de\s+electricidad|total\s+factura|informaci[oó]n\s+adicional|$)/i);
+    const scoped = blockMatch ? blockMatch[1] : raw;
 
     const byPeriod = {};
-    const re = /P\s*([1-6])\s*:\s*(\d+[\d\.,]*)\s*kwh\s*[*]\s*(\d+[\d\.,]*)\s*(?:€\s*)?\/?\s*kwh/gi;
+    const re = /P\s*([1-6])\s*:?\s*(\d+[\d\.,]*)\s*kwh\s*[*]\s*(\d+[\d\.,]*)\s*(?:€\s*)?\/?\s*kwh/gi;
     let m;
     while ((m = re.exec(scoped)) !== null) {
         const period = Number(m[1]);
@@ -174,6 +174,25 @@ function extractTollPeriodItems(text) {
         const unitPriceKwh = parseSpanishNumber(m[3]);
         if (!byPeriod[period]) {
             byPeriod[period] = { period, kwh, unitPriceKwh };
+        }
+    }
+
+    // Fallback OCR: Pn seguido de precio /kWh aunque falten separadores
+    if (Object.keys(byPeriod).length === 0) {
+        const pRe = /P\s*([1-6])\s*:?/gi;
+        let pMatch;
+        while ((pMatch = pRe.exec(scoped)) !== null) {
+            const period = Number(pMatch[1]);
+            const window = scoped.slice(pMatch.index, pMatch.index + 180);
+            const kwhMatch = window.match(/(\d+[\d\.,]*)\s*kwh/i);
+            const priceMatch = window.match(/(\d+[\d\.,]*)\s*(?:€\s*)?\/?\s*kwh/i);
+            if (kwhMatch && priceMatch) {
+                byPeriod[period] = {
+                    period,
+                    kwh: parseSpanishNumber(kwhMatch[1]),
+                    unitPriceKwh: parseSpanishNumber(priceMatch[1])
+                };
+            }
         }
     }
 
@@ -195,12 +214,28 @@ function extractPowerPeriodItems(text) {
     return Object.values(byPeriod).sort((a, b) => a.period - b.period);
 }
 
+function validateMandatoryTolls(inv) {
+    const energyPeriods = (inv.energyPeriodItems || []).filter(item => Number(item.kwh || 0) > 0);
+    const tollPeriods = (inv.tollPeriodItems || []).filter(item => Number(item.unitPriceKwh || 0) > 0);
+
+    const missing = energyPeriods
+        .filter(e => !tollPeriods.some(t => t.period === e.period))
+        .map(e => e.period)
+        .sort((a, b) => a - b);
+
+    inv._missingTollPeriods = missing;
+    inv._hasMandatoryTolls = missing.length === 0 && energyPeriods.length > 0;
+    return inv._hasMandatoryTolls;
+}
+
 // ========================================================================
 // 5. MOTOR DE PROCESAMIENTO DE ARCHIVOS (AUDITORÍA IA CON OPENAI)
 // ========================================================================
 async function processFiles(files) {
     const loading = document.getElementById('loading');
     if (loading) loading.classList.remove('hidden');
+
+    let rejectedByMissingTolls = 0;
 
     for (const file of files) {
         try {
@@ -225,10 +260,24 @@ async function processFiles(files) {
                 console.warn('No hay datos IA para', file.name, '- aplicando fallback local.');
                 auditData = fallbackParseInvoiceText(fullText, file.name);
             }
+
+            // Regla de negocio obligatoria: no pasar facturas sin peajes por periodo
+            const hasMandatoryTolls = validateMandatoryTolls(auditData);
+            if (!hasMandatoryTolls) {
+                const missingText = (auditData._missingTollPeriods || []).map(p => `P${p}`).join(', ') || 'todos';
+                auditData._auditStatus = `RECHAZADA - faltan peajes (${missingText})`;
+                rejectedByMissingTolls += 1;
+                console.warn(`[REGLA] Factura rechazada por peajes faltantes: ${file.name} | ${missingText}`);
+            }
+
             console.log(`[Result] Datos extraídos:`, auditData);
             invoices.push(auditData);
-            saveToDatabase([auditData]);
-            await cloudSync(auditData);
+
+            // Solo se persiste historial/cloud si cumple la regla de peajes obligatorios
+            if (hasMandatoryTolls) {
+                saveToDatabase([auditData]);
+                await cloudSync(auditData);
+            }
         } catch (e) {
             console.error(`[Fatal] Error crítico en archivo ${file.name}:`, e);
         }
@@ -241,6 +290,11 @@ async function processFiles(files) {
         const dashboard = document.getElementById('dashboard');
         if (dashboard) dashboard.classList.remove('hidden');
     }
+
+    if (rejectedByMissingTolls > 0) {
+        alert(`Se rechazaron ${rejectedByMissingTolls} factura(s) por no incluir peajes por periodo. Ninguna factura puede pasar sin peajes.`);
+    }
+
     if (loading) loading.classList.add('hidden');
 }
 
@@ -646,7 +700,7 @@ function renderHistory() {
     const clearAllButton = `
         <div style="text-align: center; margin-bottom: 1rem;">
             <button class="btn secondary" onclick="clearAllHistory()" style="background-color: #dc2626; color: white; border: none;">
-                🗑️ Vaciar Todo el Historial
+                🗑️Vaciar Todo el Historial
             </button>
         </div>
     `;
@@ -690,14 +744,41 @@ function buildInvoiceDetailTable(inv) {
         ? inv.powerPeriodItems.map(item => `P${item.period}: ${item.kw.toFixed(2)} kW @ ${item.unitPriceKw.toFixed(6)} €/kW`).join(' | ')
         : 'N/D';
 
-    const periodTableRows = [1, 2, 3, 4, 5, 6].map(period => {
-        const e = (inv.energyPeriodItems || []).find(x => x.period === period);
-        const t = (inv.tollPeriodItems || []).find(x => x.period === period);
-        const kwh = e ? `${e.kwh.toFixed(2)} kWh` : '-';
-        const energyPrice = e ? `${e.unitPriceKwh.toFixed(6)} €/kWh` : '-';
-        const tollPrice = t ? `${t.unitPriceKwh.toFixed(6)} €/kWh` : '-';
-        return `<tr><td>P${period}</td><td>${kwh}</td><td>${energyPrice}</td><td>${tollPrice}</td></tr>`;
+    const energyPeriodsWithConsumption = (inv.energyPeriodItems || [])
+        .filter(item => Number(item.kwh || 0) > 0)
+        .sort((a, b) => a.period - b.period);
+
+    let totalEnergyCalc = 0;
+    let totalTollsCalc = 0;
+    const periodTableRows = energyPeriodsWithConsumption.map(e => {
+        const t = (inv.tollPeriodItems || []).find(x => x.period === e.period);
+        const energyAmount = Number(e.kwh || 0) * Number(e.unitPriceKwh || 0);
+        const tollAmount = Number(e.kwh || 0) * Number(t?.unitPriceKwh || 0);
+        const periodTotal = energyAmount + tollAmount;
+        totalEnergyCalc += energyAmount;
+        totalTollsCalc += tollAmount;
+
+        return `
+            <tr>
+                <td>P${e.period}</td>
+                <td>${e.kwh.toFixed(2)} kWh</td>
+                <td>${e.unitPriceKwh.toFixed(6)} €/kWh</td>
+                <td>${formatCurrency(energyAmount)}</td>
+                <td>${t ? `${t.unitPriceKwh.toFixed(6)} €/kWh` : '-'}</td>
+                <td>${formatCurrency(tollAmount)}</td>
+                <td>${formatCurrency(periodTotal)}</td>
+            </tr>
+        `;
     }).join('');
+
+    const powerDetailRows = (inv.powerPeriodItems || [])
+        .filter(item => Number(item.kw || 0) > 0)
+        .sort((a, b) => a.period - b.period)
+        .map(item => {
+            const periodCost = Number(item.kw || 0) * Number(item.unitPriceKw || 0);
+            return `P${item.period}: ${item.kw.toFixed(2)} kW x ${item.unitPriceKw.toFixed(6)} €/kW = ${formatCurrency(periodCost)}`;
+        })
+        .join(' | ');
 
     const nestedPeriodsTable = `
         <table class="modal-table" style="margin-top:0;">
@@ -706,10 +787,22 @@ function buildInvoiceDetailTable(inv) {
                     <th>Periodo</th>
                     <th>Consumo</th>
                     <th>Precio energía</th>
+                    <th>Importe energía</th>
                     <th>Precio peajes/cargos</th>
+                    <th>Importe peajes/cargos</th>
+                    <th>Total período</th>
                 </tr>
             </thead>
-            <tbody>${periodTableRows}</tbody>
+            <tbody>
+                ${periodTableRows || '<tr><td colspan="7">No hay periodos con consumo</td></tr>'}
+                <tr style="font-weight: 700; background: #f8fafc;">
+                    <td colspan="3" style="text-align:right;">Totales</td>
+                    <td>${formatCurrency(totalEnergyCalc)}</td>
+                    <td></td>
+                    <td>${formatCurrency(totalTollsCalc)}</td>
+                    <td>${formatCurrency(totalEnergyCalc + totalTollsCalc)}</td>
+                </tr>
+            </tbody>
         </table>
     `;
 
@@ -726,8 +819,10 @@ function buildInvoiceDetailTable(inv) {
         ['Energía por periodo', energyPeriodsText],
         ['Potencia por periodo', powerPeriodsText],
         ['Precio medio energía', `${(inv.energyUnitPriceAvg || 0).toFixed(6)} €/kWh`],
-        ['Coste energía', formatCurrency(inv.energyCost)],
-        ['Coste potencia', formatCurrency(inv.powerCost)],
+        ['Coste energía (detalle periodos)', `${formatCurrency(totalEnergyCalc)} + peajes ${formatCurrency(totalTollsCalc)} = ${formatCurrency(totalEnergyCalc + totalTollsCalc)}`],
+        ['Coste energía (factura)', formatCurrency(inv.energyCost)],
+        ['Coste potencia (factura)', formatCurrency(inv.powerCost)],
+        ['Detalle coste potencia por periodos', powerDetailRows || 'N/D'],
         ['Otros costes', formatCurrency(inv.othersCost)],
         ['Alquiler', formatCurrency(inv.alquiler)],
         ['Reactiva', formatCurrency(inv.reactiveCost)],
@@ -736,6 +831,7 @@ function buildInvoiceDetailTable(inv) {
         ['Tipo de impuesto', inv.taxName || (inv.igicTax ? 'IGIC' : inv.ivaTax ? 'IVA' : 'N/D')],
         ['Importe impuesto', formatCurrency(inv.taxValue || inv.breakdown?.taxAmount || 0)],
         ['Total calculado', formatCurrency(inv.totalCalculated)],
+        ['Validación peajes', inv._hasMandatoryTolls ? 'OK' : `FALTAN ${((inv._missingTollPeriods || []).map(p => `P${p}`).join(', ')) || 'periodos'}`],
         ['Estado', inv._auditStatus || 'N/D']
     ];
 
