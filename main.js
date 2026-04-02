@@ -1147,4 +1147,170 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Cargar Historial
     renderHistory();
+
+    // Cargar Comercializadoras
+    loadCommercializers();
+});
+
+// ========================================================================
+// 11. GESTIÓN DE COMERCIALIZADORAS
+// ========================================================================
+
+let commercializers = [];
+let editingCommercializerId = null;
+
+function loadCommercializers() {
+    const stored = localStorage.getItem('audit_pro_commercializers');
+    commercializers = stored ? JSON.parse(stored) : [];
+    console.log('[Commercializers] Cargadas', commercializers.length, 'comercializadoras');
+    renderCommercializersList();
+}
+
+function saveCommercializersToStorage() {
+    localStorage.setItem('audit_pro_commercializers', JSON.stringify(commercializers));
+    console.log('[Commercializers] Guardadas en localStorage');
+}
+
+function renderCommercializersList() {
+    const list = document.getElementById('commercializers-list');
+    if (!list) return;
+
+    if (commercializers.length === 0) {
+        list.innerHTML = '<p style="text-align: center; color: #999; padding: 2rem;">No hay comercializadoras. Crea una nueva.</p>';
+        return;
+    }
+
+    const html = commercializers.map((c, idx) => `
+        <div class="card" style="margin-bottom: 1rem; padding: 1rem; border: 1px solid #e5e7eb; border-radius: 6px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
+                <div>
+                    <h3 style="margin: 0; font-size: 1.1rem;">${c.name}</h3>
+                    <small style="color: #666;">ID: ${c.id}</small>
+                </div>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="btn primary" onclick="editCommercializer(${idx})" style="font-size: 0.8rem; padding: 0.4rem 0.8rem;">Editar</button>
+                    <button class="btn secondary" onclick="deleteCommercializer(${idx})" style="font-size: 0.8rem; padding: 0.4rem 0.8rem; background-color: #ef4444; color: white; border: none;">Eliminar</button>
+                </div>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr auto; gap: 2rem;">
+                <div>
+                    <h4 style="margin: 0 0 0.5rem 0; font-size: 0.9rem; text-decoration: underline;">Precios de Energía (€/kWh)</h4>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; font-size: 0.85rem;">
+                        ${[1, 2, 3, 4, 5, 6].map(p => `
+                            <div>P${p}: <strong>${(c.energyPrices[p] || 0).toFixed(6)}</strong></div>
+                        `).join('')}
+                    </div>
+                </div>
+                <div>
+                    <h4 style="margin: 0 0 0.5rem 0; font-size: 0.9rem; text-decoration: underline;">Precios de Potencia (€/kW)</h4>
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; font-size: 0.85rem;">
+                        ${[1, 2, 3, 4, 5, 6].map(p => `
+                            <div>P${p}: <strong>${(c.powerPrices[p] || 0).toFixed(6)}</strong></div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+
+    list.innerHTML = html;
+}
+
+function openCommercializerModal(indexToEdit = null) {
+    const modal = document.getElementById('commercializer-modal');
+    const title = document.getElementById('commercializer-modal-title');
+    if (!modal || !title) return;
+
+    editingCommercializerId = indexToEdit !== null ? indexToEdit : null;
+    
+    if (indexToEdit !== null && commercializers[indexToEdit]) {
+        const c = commercializers[indexToEdit];
+        title.innerText = `Editar: ${c.name}`;
+        
+        document.getElementById('commercializer-name').value = c.name;
+        [1, 2, 3, 4, 5, 6].forEach(p => {
+            document.getElementById(`energy-p${p}`).value = c.energyPrices[p] || '';
+            document.getElementById(`power-p${p}`).value = c.powerPrices[p] || '';
+        });
+    } else {
+        title.innerText = 'Nueva Comercializadora';
+        document.getElementById('commercializer-name').value = '';
+        [1, 2, 3, 4, 5, 6].forEach(p => {
+            document.getElementById(`energy-p${p}`).value = '';
+            document.getElementById(`power-p${p}`).value = '';
+        });
+    }
+
+    modal.classList.remove('hidden');
+}
+
+function closeCommercializerModal() {
+    const modal = document.getElementById('commercializer-modal');
+    if (modal) modal.classList.add('hidden');
+    editingCommercializerId = null;
+}
+
+function saveCommercializer() {
+    const name = document.getElementById('commercializer-name').value.trim();
+    if (!name) {
+        alert('Por favor ingresa un nombre de comercializadora.');
+        return;
+    }
+
+    const energyPrices = {};
+    const powerPrices = {};
+    [1, 2, 3, 4, 5, 6].forEach(p => {
+        energyPrices[p] = parseFloat(document.getElementById(`energy-p${p}`).value) || 0;
+        powerPrices[p] = parseFloat(document.getElementById(`power-p${p}`).value) || 0;
+    });
+
+    if (editingCommercializerId !== null) {
+        // Editar existente
+        commercializers[editingCommercializerId] = {
+            id: commercializers[editingCommercializerId].id,
+            name,
+            energyPrices,
+            powerPrices
+        };
+        console.log(`[Commercializers] Actualizada comercializadora: ${name}`);
+    } else {
+        // Crear nueva
+        const newCommercializer = {
+            id: `comm_${Date.now()}`,
+            name,
+            energyPrices,
+            powerPrices
+        };
+        commercializers.push(newCommercializer);
+        console.log(`[Commercializers] Creada nueva comercializadora: ${name}`);
+    }
+
+    saveCommercializersToStorage();
+    renderCommercializersList();
+    closeCommercializerModal();
+}
+
+function editCommercializer(index) {
+    openCommercializerModal(index);
+}
+
+function deleteCommercializer(index) {
+    const name = commercializers[index]?.name || 'Comercializadora';
+    if (confirm(`¿Estás seguro de que quieres eliminar "${name}"?`)) {
+        commercializers.splice(index, 1);
+        saveCommercializersToStorage();
+        renderCommercializersList();
+        console.log(`[Commercializers] Eliminada: ${name}`);
+    }
+}
+
+// Cerrar modal al clicar fuera
+window.addEventListener('click', (event) => {
+    const modal = document.getElementById('commercializer-modal');
+    if (!modal || modal.classList.contains('hidden')) return;
+    const content = modal.querySelector('.modal-content');
+    if (content && !content.contains(event.target)) {
+        closeCommercializerModal();
+    }
 });
