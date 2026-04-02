@@ -265,6 +265,11 @@
         <div class="modal-content" style="max-width: 1200px; max-height: 90vh; overflow-y: auto;">
             <button class="modal-close" onclick="closeComparisonTransparencyModal()">×</button>
             <h2>Informe Transparente de Ahorro: Antes vs Despues</h2>
+            <div style="display:flex; justify-content:flex-end; gap:0.5rem; margin-top:0.5rem;">
+                <button class="btn primary" onclick="openComparisonTransparencyPrintView()">Imprimir / Guardar PDF</button>
+                <button class="btn secondary" onclick="downloadComparisonTransparencyHtml()">Exportar HTML</button>
+                <button class="btn secondary" onclick="downloadComparisonTransparencyPdf()">Descargar PDF directo</button>
+            </div>
             <div id="comparison-transparency-body" style="margin-top: 1rem;"></div>
         </div>
     </div>

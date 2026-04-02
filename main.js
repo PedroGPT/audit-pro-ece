@@ -2077,6 +2077,22 @@ function buildInvoiceTransparencySimulation(inv, comm) {
     };
 }
 
+function buildReportHeaderHtml(title, subtitle = '') {
+    const cleanTitle = String(title || '').trim() || 'Informe';
+    const cleanSubtitle = String(subtitle || '').trim();
+    return `
+        <div class="card" style="padding:0.9rem; margin-bottom:1rem; border:1px solid #dbeafe; background:#f8fafc;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+                <div>
+                    <div style="font-size:1rem; font-weight:700; color:#0f172a;">${cleanTitle}</div>
+                    <div style="font-size:0.85rem; color:#64748b;">ECE Consultores${cleanSubtitle ? ` | ${cleanSubtitle}` : ''}</div>
+                </div>
+                <img src="logo.png" alt="Logo ECE Consultores" style="height:54px; width:auto; object-fit:contain;" onerror="this.style.display='none'">
+            </div>
+        </div>
+    `;
+}
+
 function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMode = 'single') {
     const baseInv = compareBaseInvoice || invoices[invoiceIdx];
     const comm = commercializers[commercializerIdx];
@@ -2124,7 +2140,7 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
     `).join('');
 
     const involvedSuppliesCard = scopeMode === 'client-tariff' ? `
-        <div class="card" style="padding:0.85rem; margin-bottom:1rem; border:1px solid #e5e7eb;">
+        <div class="card pdf-avoid-break" style="padding:0.85rem; margin-bottom:1rem; border:1px solid #e5e7eb;">
             <h3 style="margin-bottom:0.5rem;">Suministros implicados en el informe multipunto</h3>
             <div style="overflow-x:auto;">
                 <table class="modal-table">
@@ -2140,7 +2156,7 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
         </div>
     ` : '';
 
-    const blocks = simulations.map(s => {
+    const blocks = simulations.map((s, idx) => {
         const energyRowsHtml = s.energyRows.map(r => `
             <tr>
                 <td>P${r.period}</td>
@@ -2167,8 +2183,9 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
             </tr>
         `).join('');
 
+        const blockClass = idx === 0 ? 'pdf-avoid-break' : 'pdf-break-before';
         return `
-            <div class="card" style="padding:1rem; margin-bottom:1rem; border:1px solid #dbeafe;">
+            <div class="card ${blockClass}" style="padding:1rem; margin-bottom:1rem; border:1px solid #dbeafe;">
                 <h3 style="margin-bottom:0.5rem;">Factura ${s.invoiceNum}</h3>
                 <p style="margin:0 0 0.65rem; color:#334155;"><strong>Cliente:</strong> ${s.clientName} | <strong>Suministro:</strong> ${getShortSupplyAddress(s.supplyAddress)}<br><strong>Periodo:</strong> ${formatBillingPeriod(s.period)} | <strong>Tarifa:</strong> ${s.tariffType} | <strong>CUPS:</strong> ${s.cups}</p>
 
@@ -2262,7 +2279,8 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
 
     const scopeLabel = scopeMode === 'client-tariff' ? 'Multisuministro / Multipunto (mismo cliente y tarifa)' : 'Suministro individual';
     body.innerHTML = `
-        <div class="card" style="padding:0.85rem; margin-bottom:1rem; background:#f8fafc; border:1px solid #e2e8f0;">
+        ${buildReportHeaderHtml('Informe Transparente de Ahorro', scopeLabel)}
+        <div class="card pdf-avoid-break" style="padding:0.85rem; margin-bottom:1rem; background:#f8fafc; border:1px solid #e2e8f0;">
             <div><strong>Comercializadora actual:</strong> ${currentCommercializerLabel}</div>
             <div><strong>Comercializadora propuesta:</strong> ${comm.name}</div>
             <div><strong>Alcance:</strong> ${scopeLabel}</div>
@@ -2274,7 +2292,7 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
             </div>
             <p style="margin:0.65rem 0 0; color:#475569;">Esta simulacion parte de la factura original ya analizada del cliente. Solo cambian energia y potencia con los nuevos precios; otros conceptos, alquiler y reactiva se mantienen. Los impuestos se recalculan sobre la nueva base.</p>
         </div>
-        <div class="card" style="padding:0.85rem; margin-bottom:1rem; border:1px solid #e5e7eb;">
+        <div class="card pdf-avoid-break" style="padding:0.85rem; margin-bottom:1rem; border:1px solid #e5e7eb;">
             <h3 style="margin-bottom:0.5rem;">Reglas de transparencia del calculo</h3>
             <div style="overflow-x:auto;">
                 <table class="modal-table">
@@ -2303,6 +2321,289 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
 function closeComparisonTransparencyModal() {
     const modal = document.getElementById('comparison-transparency-modal');
     if (modal) modal.classList.add('hidden');
+}
+
+function openComparisonTransparencyPrintView() {
+    const source = document.getElementById('comparison-transparency-body');
+    if (!source || !String(source.innerHTML || '').trim()) {
+        alert('No hay contenido de informe para imprimir.');
+        return;
+    }
+
+    const printWindow = window.open('', '_blank', 'noopener,noreferrer');
+    if (!printWindow) {
+        alert('El navegador bloqueo la ventana emergente. Permite popups para abrir la vista de impresion.');
+        return;
+    }
+
+    const logoUrl = `${window.location.origin}/logo.png`;
+    const reportHtml = String(source.innerHTML || '').replace(/src="logo\.png"/g, `src="${logoUrl}"`);
+
+    printWindow.document.open();
+    printWindow.document.write(`
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Informe Transparente</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 12mm;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            color: #0f172a;
+            background: #ffffff;
+            font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+        .print-wrap {
+            width: 100%;
+        }
+        .card {
+            border: 1px solid #dbe3ef;
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 10px;
+            page-break-inside: avoid;
+            break-inside: avoid-page;
+            overflow: visible;
+        }
+        h2, h3, h4, p {
+            margin-top: 0;
+            page-break-after: avoid;
+            break-after: avoid-page;
+        }
+        .modal-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            margin-top: 6px;
+        }
+        .modal-table th,
+        .modal-table td {
+            border: 1px solid #dbe3ef;
+            padding: 6px;
+            font-size: 11px;
+            line-height: 1.35;
+            vertical-align: top;
+            white-space: normal;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+        .modal-table thead th {
+            background: #f8fafc;
+        }
+        img {
+            max-width: 100%;
+            height: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="print-wrap">${reportHtml}</div>
+</body>
+</html>
+    `);
+    printWindow.document.close();
+}
+
+async function downloadComparisonTransparencyHtml() {
+    const source = document.getElementById('comparison-transparency-body');
+    if (!source || !String(source.innerHTML || '').trim()) {
+        alert('No hay contenido de informe para exportar.');
+        return;
+    }
+
+    let logoSrc = `${window.location.origin}/logo.png`;
+    try {
+        const resp = await fetch(logoSrc);
+        if (resp.ok) {
+            const blob = await resp.blob();
+            logoSrc = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result || ''));
+                reader.onerror = () => resolve(logoSrc);
+                reader.readAsDataURL(blob);
+            });
+        }
+    } catch (err) {
+        console.warn('[HTML] No se pudo embebir el logo, se usara URL absoluta:', err);
+    }
+
+    const reportHtml = String(source.innerHTML || '')
+        .replace(/src="logo\.png"/g, `src="${logoSrc}"`)
+        .replace(/src="\/logo\.png"/g, `src="${logoSrc}"`);
+
+    const exportHtml = `<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Informe Transparente ECE Consultores</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 18px;
+            color: #0f172a;
+            background: #ffffff;
+            font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+        }
+        .card {
+            border: 1px solid #dbe3ef;
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 10px;
+            overflow: visible;
+        }
+        .modal-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+        }
+        .modal-table th,
+        .modal-table td {
+            border: 1px solid #dbe3ef;
+            padding: 7px;
+            font-size: 12px;
+            line-height: 1.35;
+            vertical-align: top;
+            white-space: normal;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }
+        .modal-table thead th {
+            background: #f8fafc;
+        }
+        img { max-width: 100%; height: auto; }
+    </style>
+</head>
+<body>
+    ${reportHtml}
+</body>
+</html>`;
+
+    const ts = new Date();
+    const safeDate = `${ts.getFullYear()}-${String(ts.getMonth() + 1).padStart(2, '0')}-${String(ts.getDate()).padStart(2, '0')}`;
+    const filename = `informe-transparente-${safeDate}.html`;
+
+    const blob = new Blob([exportHtml], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+async function downloadComparisonTransparencyPdf() {
+    const source = document.getElementById('comparison-transparency-body');
+    if (!source || !String(source.innerHTML || '').trim()) {
+        alert('No hay contenido de informe para exportar.');
+        return;
+    }
+
+    if (typeof window.html2pdf !== 'function') {
+        alert('No se ha podido cargar el motor de PDF (html2pdf). Recarga la pagina e intenta de nuevo.');
+        return;
+    }
+
+    const exportNode = source.cloneNode(true);
+    exportNode.classList.add('pdf-report-root');
+    exportNode.style.background = '#ffffff';
+    exportNode.style.padding = '10px';
+    exportNode.style.width = '740px';
+
+    // Forzar logo absoluto para evitar fallos de resolución al exportar fuera del modal.
+    const logoImg = exportNode.querySelector('img[alt="Logo ECE Consultores"]');
+    if (logoImg) {
+        logoImg.setAttribute('src', `${window.location.origin}/logo.png`);
+        logoImg.setAttribute('crossorigin', 'anonymous');
+    }
+
+    const style = document.createElement('style');
+    style.textContent = `
+        .pdf-report-root { color: #0f172a; }
+        .pdf-report-root .modal-table {
+            width: 100%;
+            table-layout: fixed;
+            border-collapse: collapse;
+        }
+        .pdf-report-root .modal-table th,
+        .pdf-report-root .modal-table td {
+            white-space: normal;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+            vertical-align: top;
+        }
+        .pdf-report-root .pdf-avoid-break,
+        .pdf-report-root table,
+        .pdf-report-root tr,
+        .pdf-report-root h3,
+        .pdf-report-root h4,
+        .pdf-report-root p {
+            break-inside: avoid;
+            page-break-inside: avoid;
+        }
+        .pdf-report-root .pdf-break-before {
+            break-before: page;
+            page-break-before: always;
+        }
+    `;
+    exportNode.prepend(style);
+
+    const tempContainer = document.createElement('div');
+    tempContainer.style.position = 'fixed';
+    tempContainer.style.left = '-20000px';
+    tempContainer.style.top = '0';
+    tempContainer.style.width = '740px';
+    tempContainer.style.background = '#ffffff';
+    tempContainer.appendChild(exportNode);
+    document.body.appendChild(tempContainer);
+
+    const images = Array.from(exportNode.querySelectorAll('img'));
+    await Promise.all(images.map((img) => {
+        if (img.complete) return Promise.resolve();
+        return new Promise((resolve) => {
+            img.onload = () => resolve();
+            img.onerror = () => resolve();
+        });
+    }));
+
+    const ts = new Date();
+    const safeDate = `${ts.getFullYear()}-${String(ts.getMonth() + 1).padStart(2, '0')}-${String(ts.getDate()).padStart(2, '0')}`;
+    const filename = `informe-transparente-${safeDate}.pdf`;
+
+    const options = {
+        margin: [8, 8, 8, 8],
+        filename,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 1.6, useCORS: true, backgroundColor: '#ffffff', scrollY: 0 },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        pagebreak: {
+            mode: ['css', 'legacy'],
+            before: '.pdf-break-before',
+            avoid: '.pdf-avoid-break, table, tr'
+        }
+    };
+
+    try {
+        await window.html2pdf().set(options).from(exportNode).save();
+    } catch (err) {
+        console.error('[PDF] Error exportando informe transparente:', err);
+        alert('No se pudo generar el PDF. Revisa consola y vuelve a intentarlo.');
+    } finally {
+        if (tempContainer.parentNode) tempContainer.parentNode.removeChild(tempContainer);
+    }
 }
 
 function renderProposals() {
@@ -2521,6 +2822,7 @@ function renderSingleComparison(invoiceIdx, commercializerIdx) {
     `).join('');
 
     const html = `
+        ${buildReportHeaderHtml(`Comparativa con ${comm.name}`, scopeLabel)}
         <h3>Comparativa con ${comm.name}</h3>
         <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Tarifa:</strong> ${inv.tariffType || 'N/D'} | <strong>Alcance:</strong> ${scopeLabel}</p>
         <div style="display:grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap:0.75rem; margin:0.75rem 0 1rem;">
@@ -2661,6 +2963,7 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
     `).join('');
 
     const html = `
+        ${buildReportHeaderHtml('Comparativa Multisuministro (Multipunto)', scopeLabel)}
         <h3>Comparativa Multisuministro (Multipunto) de Comercializadoras</h3>
         <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Tarifa:</strong> ${inv.tariffType || 'N/D'} | <strong>Alcance:</strong> ${scopeLabel}</p>
         <div class="card" style="padding:1rem; margin:0.75rem 0;">
@@ -3250,6 +3553,9 @@ window.startCompareFromTab = startCompareFromTab;
 window.applyCommercializerProposal = applyCommercializerProposal;
 window.openComparisonTransparencyModal = openComparisonTransparencyModal;
 window.closeComparisonTransparencyModal = closeComparisonTransparencyModal;
+window.openComparisonTransparencyPrintView = openComparisonTransparencyPrintView;
+window.downloadComparisonTransparencyHtml = downloadComparisonTransparencyHtml;
+window.downloadComparisonTransparencyPdf = downloadComparisonTransparencyPdf;
 window.updateProposalStatus = updateProposalStatus;
 window.openCommercializerModal = openCommercializerModal;
 window.closeCommercializerModal = closeCommercializerModal;
