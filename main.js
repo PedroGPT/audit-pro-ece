@@ -155,6 +155,26 @@ function detectComercializadoraFromText(text) {
     return 'N/D';
 }
 
+function detectTariffTypeFromText(text) {
+    const raw = String(text || '');
+    const lower = raw.toLowerCase();
+
+    // Patrones frecuentes en facturas: 2.0TD, 3.0A, 6.1TD, etc.
+    const match = lower.match(/(?:tarifa|peaje|acceso|tipo\s*de\s*tarifa)?\s*[:\-]?\s*(2\.0\s*td|2\.0|3\.0\s*a?|3\.0|6\.1\s*td|6\.1)/i);
+    if (match) {
+        const normalized = match[1].replace(/\s+/g, '').toUpperCase();
+        if (normalized.startsWith('2.0')) return '2.0';
+        if (normalized.startsWith('3.0')) return '3.0';
+        if (normalized.startsWith('6.1')) return '6.1';
+    }
+
+    if (/\b2\.0\b|\b2\.0td\b/.test(lower)) return '2.0';
+    if (/\b3\.0\b|\b3\.0a\b|\b3\.0td\b/.test(lower)) return '3.0';
+    if (/\b6\.1\b|\b6\.1td\b/.test(lower)) return '6.1';
+
+    return 'N/D';
+}
+
 function extractEnergyPeriodItems(text) {
     const raw = String(text || '').replace(/×/g, '*').replace(/x/g, '*');
     const byPeriod = {};
@@ -385,7 +405,7 @@ async function runExtractionIA(text, fileName) {
                 engine: 'openai',
                 prompt: `Actúa como auditor energético. Extrae de este texto los siguientes campos en un JSON:
                 invoiceNum, cups, period, clientName, supplyAddress, powerCost, energyCost, othersCost, alquiler, reactiveCost,
-                comercializadora, electricityTax, igicTax, ivaTax, total,
+                comercializadora, tariffType (2.0, 3.0 o 6.1), electricityTax, igicTax, ivaTax, total,
                 consumptionItems (array de 6 números P1..P6),
                 energyPeriodItems (array [{period,kwh,unitPriceKwh}]),
                 powerPeriodItems (array [{period,kw,unitPriceKw,days}]) donde days son los dias del periodo de facturacion,
@@ -405,6 +425,7 @@ async function runExtractionIA(text, fileName) {
         inv.invoiceNum = inv.invoiceNum || inv.factura || inv.invoice || 'S/N';
         inv.clientName = inv.clientName || inv.customerName || inv.cliente || 'Desconocido';
         inv.comercializadora = inv.comercializadora || inv.provider || inv.vendedor || inv.company || inv.distribuidora || inv.operador || detectComercializadoraFromText(text);
+        inv.tariffType = inv.tariffType || inv.tarifa || inv.tariff || inv.tipoTarifa || detectTariffTypeFromText(text);
         inv.supplyAddress = inv.supplyAddress || inv.address || inv.direccion || 'N/D';
         inv.cups = inv.cups || inv.CUPS || 'N/D';
         inv.period = inv.period || inv.periodo || 'N/D';
@@ -530,6 +551,7 @@ function fallbackParseInvoiceText(text, fileName) {
         clientName: 'Desconocido',
         supplyAddress: 'N/D',
         comercializadora: 'N/D',
+        tariffType: 'N/D',
         period: 'N/D',
         consumption: 0,
         energyCost: 0,
@@ -560,6 +582,8 @@ function fallbackParseInvoiceText(text, fileName) {
     } else {
         invoice.comercializadora = detectComercializadoraFromText(text);
     }
+
+    invoice.tariffType = detectTariffTypeFromText(text);
 
     // Extraer nombre de cliente
     const clienteMatch = textLower.match(/(?:cliente|titular|nombre)\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]+)/i);
@@ -776,6 +800,7 @@ function renderAuditDashboard() {
                 <strong>${inv.invoiceNum || 'S/N'}</strong><br>
                 <small>${inv.clientName || inv.fileName}</small><br>
                 <small style="color: #64748b;">${inv.comercializadora ? 'Comercializadora: ' + inv.comercializadora : ''}</small>
+                <small style="color: #64748b; display:block;">${inv.tariffType && inv.tariffType !== 'N/D' ? 'Tarifa: ' + inv.tariffType : ''}</small>
             </td>
             <td>${inv.period || 'N/D'}</td>
             <td class="text-right">${formatCurrency(inv.totalCalculated)}</td>
@@ -968,6 +993,7 @@ function buildInvoiceDetailTable(inv) {
         ['Factura', inv.invoiceNum || 'S/N'],
         ['Cliente', inv.clientName || 'N/D'],
         ['Comercializadora', inv.comercializadora || 'N/D'],
+        ['Tarifa de acceso', inv.tariffType || 'N/D'],
         ['Dirección suministro', inv.supplyAddress || 'N/D'],
         ['CUPS', inv.cups || 'N/D'],
         ['Periodo', inv.period || 'N/D'],
