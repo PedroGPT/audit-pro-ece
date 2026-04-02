@@ -30,7 +30,7 @@ let invoices = [];
 let dbInvoices = []; 
 let currentAudit = null;
 let supabaseClient = null;
-let modalGuardUntil = { detail: 0, commercializer: 0, compareSelector: 0 };
+let modalGuardUntil = { detail: 0, commercializer: 0, compareSelector: 0, clientSupply: 0 };
 let clientSupplyRows = [];
 let currentClientSupplyPdfUrl = null;
 
@@ -1555,6 +1555,7 @@ function openClientSupplyInvoice(rowIndex) {
         </div>
     `;
 
+    modalGuardUntil.clientSupply = Date.now() + 250;
     modal.classList.remove('hidden');
 }
 
@@ -1814,6 +1815,7 @@ window.addEventListener('click', (event) => {
 window.addEventListener('click', (event) => {
     const modal = document.getElementById('client-supply-invoice-modal');
     if (!modal || modal.classList.contains('hidden')) return;
+    if (Date.now() < modalGuardUntil.clientSupply) return;
     const content = modal.querySelector('.modal-content');
     if (content && !content.contains(event.target)) {
         closeClientSupplyInvoiceModal();
