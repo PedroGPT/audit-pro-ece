@@ -485,6 +485,35 @@ function normalizeEnergyAndTolls(inv) {
     inv.tollPeriodItems = Object.values(tollByPeriod).sort((a, b) => a.period - b.period);
 }
 
+function areDuplicatedEnergyAndTolls(energyItems = [], tollItems = []) {
+    const energy = (energyItems || []).filter(item => Number(item.period) >= 1 && Number(item.unitPriceKwh || 0) > 0);
+    const tolls = (tollItems || []).filter(item => Number(item.period) >= 1 && Number(item.unitPriceKwh || 0) > 0);
+    if (energy.length === 0 || tolls.length === 0) return false;
+
+    let compared = 0;
+    let duplicated = 0;
+    energy.forEach(item => {
+        const toll = tolls.find(t => Number(t.period) === Number(item.period));
+        if (!toll) return;
+        compared += 1;
+        const energyPrice = Number(item.unitPriceKwh || 0);
+        const tollPrice = Number(toll.unitPriceKwh || 0);
+        if (Math.abs(energyPrice - tollPrice) <= 0.000001) duplicated += 1;
+    });
+
+    return compared > 0 && duplicated === compared;
+}
+
+function sanitizeInvoiceForStorage(inv) {
+    if (!inv || typeof inv !== 'object') return inv;
+    const clone = { ...inv };
+    delete clone.invoicePreviewPages;
+    delete clone.invoicePreview;
+    delete clone.invoicePreviewTotalPages;
+    delete clone.invoicePreviewRenderedPages;
+    return clone;
+}
+
 // ========================================================================
 // 5. MOTOR DE PROCESAMIENTO DE ARCHIVOS (AUDITORÍA IA CON OPENAI)
 // ========================================================================
@@ -659,11 +688,18 @@ async function runExtractionIA(text, fileName) {
             inv._powerPeriodsSource = 'openai';
         }
 
+        const regexTolls = extractTollPeriodItems(text);
+
         if (tollFromIA.length > 0) {
             inv.tollPeriodItems = tollFromIA;
             inv._tollPeriodsSource = 'openai';
+
+            if (areDuplicatedEnergyAndTolls(inv.energyPeriodItems, inv.tollPeriodItems) && regexTolls.length > 0) {
+                inv.tollPeriodItems = regexTolls;
+                inv._tollPeriodsSource = 'regex-fallback-duplicated-openai';
+            }
         } else {
-            inv.tollPeriodItems = extractTollPeriodItems(text);
+            inv.tollPeriodItems = regexTolls;
             inv._tollPeriodsSource = inv.tollPeriodItems.length > 0 ? 'regex' : 'none';
         }
 
@@ -915,7 +951,8 @@ function fallbackParseInvoiceText(text, fileName) {
 // ========================================================================
 function saveToDatabase(invoiceRecords) {
     try {
-        dbInvoices = [...invoiceRecords, ...dbInvoices];
+        const sanitizedRecords = (invoiceRecords || []).map(sanitizeInvoiceForStorage);
+        dbInvoices = [...sanitizedRecords, ...dbInvoices];
         localStorage.setItem('audit_pro_db', JSON.stringify(dbInvoices));
         renderHistory();
         renderClients();
@@ -938,9 +975,11 @@ async function cloudSync(invoice) {
 function loadLocalStore() {
     const stored = localStorage.getItem('audit_pro_db');
     if (stored) {
-        dbInvoices = JSON.parse(stored);
+        dbInvoices = JSON.parse(stored).map(sanitizeInvoiceForStorage);
+        localStorage.setItem('audit_pro_db', JSON.stringify(dbInvoices));
         console.log("[LocalDB] Cargado:", dbInvoices.length, "registros");
     }
+    renderHistory();
     renderClients();
 }
 
@@ -1580,7 +1619,10 @@ function buildInvoiceDetailTable(inv) {
 
     let html = '<table class="modal-table"><tbody>';
     rows.forEach(([label, value]) => {
-        html += `<tr><th>${label}</th><td>${value}</td></tr>`;
+        const isTotalRow = label === 'Total calculado';
+        html += isTotalRow
+            ? `<tr style="font-weight:700; background:#eef2ff;"><th>${label}</th><td>${value}</td></tr>`
+            : `<tr><th>${label}</th><td>${value}</td></tr>`;
     });
     html += '</tbody></table>';
 
@@ -2093,6 +2135,80 @@ function buildReportHeaderHtml(title, subtitle = '') {
     `;
 }
 
+function buildReportCoverHtml({
+    scopeLabel,
+    currentCommercializerLabel,
+    proposedCommercializer,
+    totals,
+    simulations
+}) {
+    const firstSimulation = (simulations || [])[0] || {};
+    const clientName = firstSimulation.clientName || 'Cliente';
+    const tariffType = firstSimulation.tariffType || 'N/D';
+    const periodLabel = formatBillingPeriod(firstSimulation.period || 'N/D');
+    const supplyCount = Number(simulations?.length || 0);
+    const currentTotal = Number(totals?.oldTotal || 0);
+    const proposedTotal = Number(totals?.newTotal || 0);
+    const savingTotal = currentTotal - proposedTotal;
+    const savingPct = currentTotal > 0 ? (savingTotal / currentTotal) * 100 : 0;
+    const generatedAt = new Date().toLocaleDateString('es-ES');
+
+    return `
+        <section class="card pdf-cover-page" style="padding:1.2rem; margin-bottom:1rem; border:1px solid #cbd5e1; background:linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; margin-bottom:1rem; flex-wrap:wrap;">
+                <div>
+                    <div style="font-size:0.78rem; letter-spacing:0.08em; text-transform:uppercase; color:#64748b; margin-bottom:0.35rem;">ECE Consultores</div>
+                    <h1 style="margin:0; font-size:2rem; line-height:1.1; color:#0f172a;">Propuesta de Mejora de Precios</h1>
+                    <p style="margin:0.45rem 0 0; color:#475569; font-size:1rem; max-width:760px;">Se presenta una propuesta comparativa sobre la factura analizada, manteniendo la estructura real del suministro y recalculando el impacto económico estimado con una nueva oferta de precios.</p>
+                </div>
+                <img src="logo.png" alt="Logo ECE Consultores" style="height:64px; width:auto; object-fit:contain;" onerror="this.style.display='none'">
+            </div>
+
+            <div style="display:grid; grid-template-columns: repeat(2, minmax(260px, 1fr)); gap:0.75rem; margin-bottom:1rem;">
+                <div class="card pdf-avoid-break" style="padding:0.85rem; border:1px solid #dbeafe; background:#ffffff; margin:0;">
+                    <div style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.06em; color:#64748b; margin-bottom:0.45rem;">Datos del informe</div>
+                    <div><strong>Cliente:</strong> ${clientName}</div>
+                    <div><strong>Tarifa:</strong> ${tariffType}</div>
+                    <div><strong>Periodo analizado:</strong> ${periodLabel}</div>
+                    <div><strong>Alcance:</strong> ${scopeLabel}</div>
+                    <div><strong>Fecha de emisión:</strong> ${generatedAt}</div>
+                    <div><strong>Suministros analizados:</strong> ${supplyCount}</div>
+                </div>
+                <div class="card pdf-avoid-break" style="padding:0.85rem; border:1px solid #dbeafe; background:#ffffff; margin:0;">
+                    <div style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.06em; color:#64748b; margin-bottom:0.45rem;">Propuesta comercial</div>
+                    <div><strong>Comercializadora actual:</strong> ${currentCommercializerLabel}</div>
+                    <div><strong>Comercializadora propuesta:</strong> ${proposedCommercializer}</div>
+                    <p style="margin:0.65rem 0 0; color:#475569;">Esta propuesta aplica nuevos precios y muestra su impacto directo en la factura.</p>
+                </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap:0.75rem; margin-bottom:1rem;">
+                <div class="card pdf-avoid-break" style="padding:0.9rem; margin:0; background:#ffffff; border:1px solid #e2e8f0;">
+                    <div style="font-size:0.8rem; color:#64748b;">Coste actual</div>
+                    <div style="font-size:1.5rem; font-weight:700; color:#0f172a;">${formatCurrency(currentTotal)}</div>
+                </div>
+                <div class="card pdf-avoid-break" style="padding:0.9rem; margin:0; background:#ffffff; border:1px solid #e2e8f0;">
+                    <div style="font-size:0.8rem; color:#64748b;">Coste propuesto</div>
+                    <div style="font-size:1.5rem; font-weight:700; color:#0f172a;">${formatCurrency(proposedTotal)}</div>
+                </div>
+                <div class="card pdf-avoid-break" style="padding:0.9rem; margin:0; background:#f0fdf4; border:1px solid #bbf7d0;">
+                    <div style="font-size:0.8rem; color:#166534;">Ahorro estimado</div>
+                    <div style="font-size:1.6rem; font-weight:800; color:#15803d;">${formatCurrency(savingTotal)}</div>
+                </div>
+                <div class="card pdf-avoid-break" style="padding:0.9rem; margin:0; background:#eff6ff; border:1px solid #bfdbfe;">
+                    <div style="font-size:0.8rem; color:#1d4ed8;">Mejora estimada</div>
+                    <div style="font-size:1.6rem; font-weight:800; color:#1d4ed8;">${savingPct.toFixed(2)}%</div>
+                </div>
+            </div>
+
+            <div class="card pdf-avoid-break" style="padding:0.9rem; margin:0; border:1px solid #e2e8f0; background:#ffffff;">
+                <div style="font-size:0.82rem; text-transform:uppercase; letter-spacing:0.06em; color:#64748b; margin-bottom:0.35rem;">Resumen ejecutivo</div>
+                <p style="margin:0; color:#334155;">Esta propuesta compara la factura actual con una nueva oferta de precios y muestra el ahorro estimado.</p>
+            </div>
+        </section>
+    `;
+}
+
 function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMode = 'single') {
     const baseInv = compareBaseInvoice || invoices[invoiceIdx];
     const comm = commercializers[commercializerIdx];
@@ -2279,7 +2395,14 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
 
     const scopeLabel = scopeMode === 'client-tariff' ? 'Multisuministro / Multipunto (mismo cliente y tarifa)' : 'Suministro individual';
     body.innerHTML = `
-        ${buildReportHeaderHtml('Informe Transparente de Ahorro', scopeLabel)}
+        ${buildReportCoverHtml({
+            scopeLabel,
+            currentCommercializerLabel,
+            proposedCommercializer: comm.name,
+            totals,
+            simulations
+        })}
+        ${buildReportHeaderHtml('Desglose Técnico de la Propuesta', scopeLabel)}
         <div class="card pdf-avoid-break" style="padding:0.85rem; margin-bottom:1rem; background:#f8fafc; border:1px solid #e2e8f0;">
             <div><strong>Comercializadora actual:</strong> ${currentCommercializerLabel}</div>
             <div><strong>Comercializadora propuesta:</strong> ${comm.name}</div>
