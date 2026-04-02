@@ -2174,9 +2174,9 @@ function buildReportCoverHtml({
                 </div>
                 <div class="card pdf-avoid-break" style="padding:0.85rem; border:1px solid #dbeafe; background:#ffffff; margin:0;">
                     <div style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.06em; color:#64748b; margin-bottom:0.45rem;">Propuesta comercial</div>
-                    <div><strong>Comercializadora actual:</strong> ${currentCommercializerLabel}</div>
-                    <div><strong>Comercializadora propuesta:</strong> ${proposedCommercializer}</div>
-                    <p style="margin:0.65rem 0 0; color:#475569;">Esta propuesta aplica nuevos precios y muestra su impacto directo en la factura.</p>
+                    <div style="font-size:0.85rem; color:#64748b; margin-bottom:0.5rem;"><small>De: ${currentCommercializerLabel}</small></div>
+                    <div style="font-size:1.6rem; font-weight:700; color:#0f172a; margin-bottom:0.5rem;">${proposedCommercializer}</div>
+                    <p style="margin:0; color:#475569;">Nueva oferta de precios con impacto directo en la factura.</p>
                 </div>
             </div>
 
