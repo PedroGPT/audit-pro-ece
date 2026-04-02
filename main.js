@@ -1150,7 +1150,7 @@ function renderAuditDashboard() {
                 <small style="color: #64748b;">${inv.comercializadora ? 'Comercializadora: ' + inv.comercializadora : ''}</small>
                 <small style="color: #64748b; display:block;">${inv.tariffType && inv.tariffType !== 'N/D' ? 'Tarifa: ' + inv.tariffType : ''}</small>
             </td>
-            <td>${inv.period || 'N/D'}</td>
+            <td>${formatBillingPeriod(inv.period || 'N/D')}</td>
             <td class="text-right">${formatCurrency(inv.totalCalculated)}</td>
             <td class="text-right">
                  <button class="btn primary btn-sm" onclick="openDetailModalFromInvoices(${index})">Ver Detalle</button>
@@ -1197,7 +1197,7 @@ function renderHistory() {
             </button>
             <div style="display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center;">
                 <div>
-                    <strong>${inv.fileName || inv.invoiceNum || 'N/A'}</strong> - ${inv.period || 'Periodo desconocido'}
+                    <strong>${inv.fileName || inv.invoiceNum || 'N/A'}</strong> - ${formatBillingPeriod(inv.period || 'Periodo desconocido')}
                     <br>Total: ${formatCurrency(inv.totalCalculated)} - Consumo: ${inv.consumption?.toFixed(2) || 0} kWh
                     <br><small style="color: #64748b;">Estado: ${inv._auditStatus || 'Procesado'}</small>
                 </div>
@@ -1214,6 +1214,28 @@ function renderHistory() {
 // ========================================================================
 function formatCurrency(a) { 
     return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(a || 0); 
+}
+
+function formatBillingPeriod(periodText) {
+    const raw = String(periodText || '').trim();
+    if (!raw || raw === 'N/D') return 'N/D';
+
+    const rangeMatch = raw.match(/(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})\s*(?:-|a|al)\s*(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})/i);
+    if (!rangeMatch) return raw;
+
+    const normalizeDate = (value) => {
+        const parts = value.replace(/[\.\-]/g, '/').split('/').map(v => v.trim());
+        if (parts.length !== 3) return value;
+        const d = String(Number(parts[0] || 0)).padStart(2, '0');
+        const m = String(Number(parts[1] || 0)).padStart(2, '0');
+        const yNum = Number(parts[2] || 0);
+        const yy = String(yNum % 100).padStart(2, '0');
+        return `${d}/${m}/${yy}`;
+    };
+
+    const from = normalizeDate(rangeMatch[1]);
+    const to = normalizeDate(rangeMatch[2]);
+    return `del ${from} al ${to}`;
 }
 
 function computeInvoiceAutoAudit(inv) {
@@ -1506,7 +1528,7 @@ function buildInvoiceDetailTable(inv) {
         ['Tarifa de acceso', inv.tariffType || 'N/D'],
         ['Dirección suministro', inv.supplyAddress || 'N/D'],
         ['CUPS', inv.cups || 'N/D'],
-        ['Periodo', inv.period || 'N/D'],
+        ['Periodo', formatBillingPeriod(inv.period || 'N/D')],
         ['Consumo total (kWh)', inv.consumption?.toFixed(2) || '0'],
         ['Consumo por periodos (kWh)', (inv.consumptionItems && inv.consumptionItems.length > 0) ? inv.consumptionItems.map((v,o)=>`P${o+1}:${v.toFixed(2)}`).join(' | ') : 'N/D'],
         ['Detalle periodos (tabla)', nestedPeriodsTable],
@@ -2078,7 +2100,7 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
         return `
             <div class="card" style="padding:1rem; margin-bottom:1rem; border:1px solid #dbeafe;">
                 <h3 style="margin-bottom:0.5rem;">Factura ${s.invoiceNum}</h3>
-                <p style="margin:0 0 0.65rem; color:#334155;"><strong>Cliente:</strong> ${s.clientName} | <strong>Suministro:</strong> ${getShortSupplyAddress(s.supplyAddress)} | <strong>CUPS:</strong> ${s.cups} | <strong>Periodo:</strong> ${s.period} | <strong>Tarifa:</strong> ${s.tariffType}</p>
+                <p style="margin:0 0 0.65rem; color:#334155;"><strong>Cliente:</strong> ${s.clientName} | <strong>Suministro:</strong> ${getShortSupplyAddress(s.supplyAddress)} | <strong>CUPS:</strong> ${s.cups} | <strong>Periodo:</strong> ${formatBillingPeriod(s.period)} | <strong>Tarifa:</strong> ${s.tariffType}</p>
 
                 <h4 style="margin:0.75rem 0 0.5rem;">1) Energia por periodos</h4>
                 <div style="overflow-x:auto; margin-bottom:0.75rem;">
@@ -2416,7 +2438,7 @@ function renderSingleComparison(invoiceIdx, commercializerIdx) {
                 <div>${getShortSupplyAddress(r.supplyAddress)}</div>
                 <small style="color:#64748b;">CUPS: ${r.cups}</small>
             </td>
-            <td>${r.period}</td>
+            <td>${formatBillingPeriod(r.period)}</td>
             <td>${r.consumption.toFixed(2)} kWh</td>
             <td>${formatCurrency(r.oldEnergy)}</td>
             <td>${formatCurrency(r.proposedEnergy)}</td>
@@ -2510,7 +2532,7 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
                 <div>${getShortSupplyAddress(row.supplyAddress)}</div>
                 <small style="color:#64748b;">CUPS: ${row.cups}</small>
             </td>
-            <td>${row.period}</td>
+            <td>${formatBillingPeriod(row.period)}</td>
             <td>${row.consumption.toFixed(2)} kWh</td>
             <td>${formatCurrency(row.energyCost)}</td>
             <td>${formatCurrency(row.powerCost)}</td>
