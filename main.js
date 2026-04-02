@@ -1221,7 +1221,9 @@ function formatBillingPeriod(periodText) {
     if (!raw || raw === 'N/D') return 'N/D';
 
     const rangeMatch = raw.match(/(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})\s*(?:-|a|al)\s*(\d{1,2}[\/\.\-]\d{1,2}[\/\.\-]\d{2,4})/i);
-    if (!rangeMatch) return raw;
+    const longMatch = raw.match(/del\s+(\d{1,2})\s+de\s+([a-záéíóúñ]+)\s+de\s+(\d{2,4})\s+al\s+(\d{1,2})\s+de\s+([a-záéíóúñ]+)\s+de\s+(\d{2,4})/i);
+
+    if (!rangeMatch && !longMatch) return raw;
 
     const normalizeDate = (value) => {
         const parts = value.replace(/[\.\-]/g, '/').split('/').map(v => v.trim());
@@ -1233,8 +1235,42 @@ function formatBillingPeriod(periodText) {
         return `${d}/${m}/${yy}`;
     };
 
-    const from = normalizeDate(rangeMatch[1]);
-    const to = normalizeDate(rangeMatch[2]);
+    const monthMap = {
+        enero: 1,
+        febrero: 2,
+        marzo: 3,
+        abril: 4,
+        mayo: 5,
+        junio: 6,
+        julio: 7,
+        agosto: 8,
+        septiembre: 9,
+        setiembre: 9,
+        octubre: 10,
+        noviembre: 11,
+        diciembre: 12
+    };
+
+    let from;
+    let to;
+
+    if (rangeMatch) {
+        from = normalizeDate(rangeMatch[1]);
+        to = normalizeDate(rangeMatch[2]);
+    } else {
+        const d1 = String(Number(longMatch[1] || 0)).padStart(2, '0');
+        const m1 = String(monthMap[String(longMatch[2] || '').toLowerCase()] || 0).padStart(2, '0');
+        const y1 = String(Number(longMatch[3] || 0) % 100).padStart(2, '0');
+
+        const d2 = String(Number(longMatch[4] || 0)).padStart(2, '0');
+        const m2 = String(monthMap[String(longMatch[5] || '').toLowerCase()] || 0).padStart(2, '0');
+        const y2 = String(Number(longMatch[6] || 0) % 100).padStart(2, '0');
+
+        if (m1 === '00' || m2 === '00') return raw;
+        from = `${d1}/${m1}/${y1}`;
+        to = `${d2}/${m2}/${y2}`;
+    }
+
     return `del ${from} al ${to}`;
 }
 
