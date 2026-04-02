@@ -1698,7 +1698,7 @@ let compareScope = 'single';
 function openCompareForInvoice(inv, fromIndex = null) {
     if (!inv) return;
 
-    const compatible = commercializers.filter(c => !c.tariffType || c.tariffType === inv.tariffType);
+    const compatible = commercializers.filter(c => !c.tariffType || inv.tariffType?.startsWith(String(c.tariffType).trim()));
     if (compatible.length === 0) {
         alert('No hay comercializadoras configuradas compatibles con la tarifa de esta factura.');
         return;
