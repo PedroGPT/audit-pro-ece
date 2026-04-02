@@ -34,6 +34,7 @@ let modalGuardUntil = { detail: 0, commercializer: 0, compareSelector: 0, client
 let clientSupplyRows = [];
 let currentClientSupplyPdfUrl = null;
 let supplyProposals = {};
+let proposalsLog = [];
 
 // Mapa para mantener los objetos File en memoria para el visor de PDF
 window.pendingPdfFiles = new Map();
@@ -265,6 +266,23 @@ function loadSupplyProposals() {
 
 function saveSupplyProposals() {
     localStorage.setItem('audit_pro_supply_proposals', JSON.stringify(supplyProposals));
+}
+
+function loadProposalsLog() {
+    try {
+        proposalsLog = JSON.parse(localStorage.getItem('audit_pro_proposals_log') || '[]');
+        if (!Array.isArray(proposalsLog)) proposalsLog = [];
+    } catch {
+        proposalsLog = [];
+    }
+}
+
+function saveProposalsLog() {
+    localStorage.setItem('audit_pro_proposals_log', JSON.stringify(proposalsLog));
+}
+
+function getProposalStatusOptions() {
+    return ['propuesta', 'enviada', 'aceptada', 'rechazada', 'implantada', 'caducada'];
 }
 
 function getSupplyProposal(inv) {
@@ -1454,6 +1472,137 @@ function computeComparisonMetrics(compareInvoices, comm) {
     };
 }
 
+function computeInvoiceProposalMetrics(inv, comm) {
+    const allowedPeriods = getActivePeriodsByTariff(inv.tariffType, inv.energyPeriodItems || []);
+    const energyItems = (inv.energyPeriodItems || []).filter(item => allowedPeriods.includes(Number(item.period)));
+    const consumption = energyItems.reduce((sum, item) => sum + Number(item.kwh || 0), 0);
+    const oldEnergy = energyItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0);
+    const newEnergy = energyItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(comm.energyPrices?.[item.period] || 0)), 0);
+    const oldTotal = Number(inv.totalCalculated || 0);
+    const invEnergyReference = Number(inv.energyCost || 0) > 0 ? Number(inv.energyCost || 0) : oldEnergy;
+    const newTotalSim = oldTotal - invEnergyReference + newEnergy;
+    return {
+        consumption,
+        oldEnergy,
+        newEnergy,
+        oldAvgPrice: consumption > 0 ? oldEnergy / consumption : 0,
+        newAvgPrice: consumption > 0 ? newEnergy / consumption : 0,
+        energySaving: oldEnergy - newEnergy,
+        oldTotal,
+        newTotalSim,
+        totalSaving: oldTotal - newTotalSim
+    };
+}
+
+function renderProposals() {
+    const list = document.getElementById('proposals-list');
+    if (!list) return;
+
+    const filterClientEl = document.getElementById('proposals-filter-client');
+    const filterStatusEl = document.getElementById('proposals-filter-status');
+    const filterTariffEl = document.getElementById('proposals-filter-tariff');
+    const filterComEl = document.getElementById('proposals-filter-commercializer');
+
+    const q = String(filterClientEl?.value || '').trim().toLowerCase();
+    const selectedStatus = filterStatusEl?.value || '';
+    const selectedTariff = filterTariffEl?.value || '';
+    const selectedCom = filterComEl?.value || '';
+
+    if (filterStatusEl) {
+        const opts = getProposalStatusOptions();
+        filterStatusEl.innerHTML = '<option value="">Todos los estados</option>' + opts.map(v => `<option value="${v}">${v}</option>`).join('');
+        if (opts.includes(selectedStatus)) filterStatusEl.value = selectedStatus;
+    }
+
+    if (filterTariffEl) {
+        const tariffs = [...new Set(proposalsLog.map(p => String(p.tariffType || '').trim()).filter(Boolean))]
+            .sort((a, b) => sortTariffValue(a) - sortTariffValue(b));
+        filterTariffEl.innerHTML = '<option value="">Todas las tarifas</option>' + tariffs.map(v => `<option value="${v}">${v}</option>`).join('');
+        if (tariffs.includes(selectedTariff)) filterTariffEl.value = selectedTariff;
+    }
+
+    if (filterComEl) {
+        const comms = [...new Set(proposalsLog.map(p => String(p.proposedCommercializer || '').trim()).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+        filterComEl.innerHTML = '<option value="">Todas las propuestas</option>' + comms.map(v => `<option value="${v}">${v}</option>`).join('');
+        if (comms.includes(selectedCom)) filterComEl.value = selectedCom;
+    }
+
+    const activeStatus = filterStatusEl?.value || '';
+    const activeTariff = filterTariffEl?.value || '';
+    const activeCom = filterComEl?.value || '';
+
+    const filtered = proposalsLog
+        .slice()
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .filter(p => {
+            const text = `${p.clientName || ''} ${p.cups || ''} ${p.invoiceNum || ''}`.toLowerCase();
+            const matchText = !q || text.includes(q);
+            const matchStatus = !activeStatus || p.status === activeStatus;
+            const matchTariff = !activeTariff || p.tariffType === activeTariff;
+            const matchCom = !activeCom || p.proposedCommercializer === activeCom;
+            return matchText && matchStatus && matchTariff && matchCom;
+        });
+
+    if (filtered.length === 0) {
+        list.innerHTML = '<div class="card" style="padding:1rem;">No hay propuestas registradas con esos filtros.</div>';
+        return;
+    }
+
+    const rows = filtered.map(p => {
+        const statusOptions = getProposalStatusOptions().map(v => `<option value="${v}" ${p.status === v ? 'selected' : ''}>${v}</option>`).join('');
+        return `
+            <tr>
+                <td>${new Date(p.createdAt).toLocaleDateString('es-ES')}</td>
+                <td>${p.clientName || 'N/D'}</td>
+                <td>${p.cups || 'N/D'}</td>
+                <td>${p.tariffType || 'N/D'}</td>
+                <td>${p.currentCommercializer || 'N/D'}</td>
+                <td>${p.proposedCommercializer || 'N/D'}</td>
+                <td>${formatCurrency(p.energySaving || 0)}</td>
+                <td>${formatCurrency(p.simulatedTotal || 0)}</td>
+                <td>
+                    <select onchange="updateProposalStatus('${p.proposalId}', this.value)" style="padding:0.35rem; border:1px solid #d1d5db; border-radius:6px;">
+                        ${statusOptions}
+                    </select>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    list.innerHTML = `
+        <div class="card" style="padding:1rem;">
+            <div style="overflow-x:auto;">
+                <table class="modal-table">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Cliente</th>
+                            <th>CUPS</th>
+                            <th>Tarifa</th>
+                            <th>Actual</th>
+                            <th>Propuesta</th>
+                            <th>Ahorro energia</th>
+                            <th>Factura simulada</th>
+                            <th>Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+function updateProposalStatus(proposalId, status) {
+    const idx = proposalsLog.findIndex(p => p.proposalId === proposalId);
+    if (idx < 0) return;
+    proposalsLog[idx].status = status;
+    proposalsLog[idx].updatedAt = new Date().toISOString();
+    saveProposalsLog();
+    renderProposals();
+}
+
 function renderCompareSelectorList() {
     const list = document.getElementById('compare-selector-list');
     if (!list) return;
@@ -1715,6 +1864,9 @@ function applyCommercializerProposal(invoiceIdx, commercializerIdx, scopeMode = 
 
     targets.forEach(inv => {
         const key = buildSupplyKey(inv);
+        const metrics = computeInvoiceProposalMetrics(inv, comm);
+        const proposalId = `prop_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
         supplyProposals[key] = {
             commercializerId: comm.id,
             commercializerName: comm.name,
@@ -1722,10 +1874,36 @@ function applyCommercializerProposal(invoiceIdx, commercializerIdx, scopeMode = 
             appliedAt: new Date().toISOString(),
             scope: scopeMode
         };
+
+        proposalsLog.push({
+            proposalId,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            status: 'propuesta',
+            scope: scopeMode,
+            invoiceNum: inv.invoiceNum || 'S/N',
+            fileName: inv.fileName || '',
+            clientName: inv.clientName || 'N/D',
+            cups: inv.cups || 'N/D',
+            supplyAddress: inv.supplyAddress || 'N/D',
+            tariffType: inv.tariffType || comm.tariffType || 'N/D',
+            currentCommercializer: inv.comercializadora || 'N/D',
+            proposedCommercializer: comm.name,
+            oldAvgPrice: metrics.oldAvgPrice,
+            newAvgPrice: metrics.newAvgPrice,
+            oldEnergyCost: metrics.oldEnergy,
+            newEnergyCost: metrics.newEnergy,
+            energySaving: metrics.energySaving,
+            oldTotal: metrics.oldTotal,
+            simulatedTotal: metrics.newTotalSim,
+            totalSaving: metrics.totalSaving
+        });
     });
 
     saveSupplyProposals();
+    saveProposalsLog();
     renderClients();
+    renderProposals();
 
     alert(`Propuesta aplicada: ${comm.name} en ${targets.length} suministro(s).`);
 }
@@ -1805,6 +1983,7 @@ function closeClientSupplyInvoiceModal() {
 document.addEventListener('DOMContentLoaded', () => {
     initApp();
     loadSupplyProposals();
+    loadProposalsLog();
 
     // Botones de navegación
     document.querySelectorAll('.nav-item').forEach(btn => {
@@ -1822,6 +2001,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Cargar Historial
     renderHistory();
     renderClients();
+    renderProposals();
 
     // Cargar Comercializadoras
     loadCommercializers();
@@ -2059,6 +2239,7 @@ window.openDetailModalFromHistory = openDetailModalFromHistory;
 window.openClientSupplyInvoice = openClientSupplyInvoice;
 window.closeClientSupplyInvoiceModal = closeClientSupplyInvoiceModal;
 window.applyCommercializerProposal = applyCommercializerProposal;
+window.updateProposalStatus = updateProposalStatus;
 window.openCommercializerModal = openCommercializerModal;
 window.closeCommercializerModal = closeCommercializerModal;
 window.saveCommercializer = saveCommercializer;
