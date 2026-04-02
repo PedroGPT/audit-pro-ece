@@ -106,6 +106,15 @@
             <div id="clients-view" class="view hidden">
                 <section class="results-section">
                     <h2>Clientes</h2>
+                    <div style="display:grid; grid-template-columns: 2fr 1fr 1fr; gap:0.75rem; margin-bottom:1rem;">
+                        <input id="clients-filter-supply" type="text" placeholder="Filtrar por suministro (direccion o CUPS)" oninput="renderClients()" style="padding:0.55rem; border:1px solid #d1d5db; border-radius:6px;">
+                        <select id="clients-filter-tariff" onchange="renderClients()" style="padding:0.55rem; border:1px solid #d1d5db; border-radius:6px;">
+                            <option value="">Todas las tarifas</option>
+                        </select>
+                        <select id="clients-filter-commercializer" onchange="renderClients()" style="padding:0.55rem; border:1px solid #d1d5db; border-radius:6px;">
+                            <option value="">Todas las comercializadoras</option>
+                        </select>
+                    </div>
                     <div id="clients-list"></div>
                 </section>
             </div>

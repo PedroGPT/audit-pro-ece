@@ -776,11 +776,39 @@ function renderClients() {
     const clientsList = document.getElementById('clients-list');
     if (!clientsList) return;
 
+    const filterSupplyEl = document.getElementById('clients-filter-supply');
+    const filterTariffEl = document.getElementById('clients-filter-tariff');
+    const filterCommercializerEl = document.getElementById('clients-filter-commercializer');
+
     const allInvoices = [...dbInvoices, ...invoices];
     if (allInvoices.length === 0) {
         clientsList.innerHTML = '<div class="card" style="padding:1rem;">No hay clientes todavía. Sube facturas para generarlos automáticamente.</div>';
         return;
     }
+
+    const selectedTariff = filterTariffEl ? filterTariffEl.value : '';
+    const selectedCommercializer = filterCommercializerEl ? filterCommercializerEl.value : '';
+    const supplyQuery = String(filterSupplyEl?.value || '').trim().toLowerCase();
+
+    // Cargar opciones de filtros dinamicos manteniendo seleccion actual
+    const tariffOptions = [...new Set(allInvoices.map(inv => String(inv.tariffType || 'N/D').trim() || 'N/D'))]
+        .filter(v => v && v !== 'N/D')
+        .sort((a, b) => sortTariffValue(a) - sortTariffValue(b));
+    const commercializerOptions = [...new Set(allInvoices.map(inv => String(inv.comercializadora || 'N/D').trim() || 'N/D'))]
+        .filter(v => v && v !== 'N/D')
+        .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+
+    if (filterTariffEl) {
+        filterTariffEl.innerHTML = '<option value="">Todas las tarifas</option>' + tariffOptions.map(v => `<option value="${v}">${v}</option>`).join('');
+        filterTariffEl.value = tariffOptions.includes(selectedTariff) ? selectedTariff : '';
+    }
+    if (filterCommercializerEl) {
+        filterCommercializerEl.innerHTML = '<option value="">Todas las comercializadoras</option>' + commercializerOptions.map(v => `<option value="${v}">${v}</option>`).join('');
+        filterCommercializerEl.value = commercializerOptions.includes(selectedCommercializer) ? selectedCommercializer : '';
+    }
+
+    const activeTariff = filterTariffEl ? filterTariffEl.value : '';
+    const activeCommercializer = filterCommercializerEl ? filterCommercializerEl.value : '';
 
     const byClient = new Map();
     allInvoices.forEach(inv => {
@@ -813,7 +841,15 @@ function renderClients() {
                     const byAddress = a.address.localeCompare(b.address, 'es', { sensitivity: 'base' });
                     if (byAddress !== 0) return byAddress;
                     return sortTariffValue(a.tariffType) - sortTariffValue(b.tariffType);
+                })
+                .filter(s => {
+                    const matchSupply = !supplyQuery || `${s.address} ${s.cups}`.toLowerCase().includes(supplyQuery);
+                    const matchTariff = !activeTariff || s.tariffType === activeTariff;
+                    const matchCommercializer = !activeCommercializer || s.comercializadora === activeCommercializer;
+                    return matchSupply && matchTariff && matchCommercializer;
                 });
+
+            if (supplies.length === 0) return '';
 
             const rows = supplies.map(s => `
                 <tr>
@@ -846,7 +882,7 @@ function renderClients() {
             `;
         }).join('');
 
-    clientsList.innerHTML = html;
+    clientsList.innerHTML = html || '<div class="card" style="padding:1rem;">No hay suministros que cumplan los filtros.</div>';
 }
 
 // ========================================================================
