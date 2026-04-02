@@ -35,6 +35,8 @@ let clientSupplyRows = [];
 let currentClientSupplyPdfUrl = null;
 let supplyProposals = {};
 let proposalsLog = [];
+let compareBaseInvoice = null;
+let compareCatalog = [];
 
 // Mapa para mantener los objetos File en memoria para el visor de PDF
 window.pendingPdfFiles = new Map();
@@ -106,6 +108,13 @@ function switchView(viewId) {
     document.querySelectorAll('.nav-item').forEach(btn => {
         btn.classList.toggle('active', btn.getAttribute('data-view') === viewId);
     });
+
+    if (viewId === 'compare-view') {
+        const compareSection = document.getElementById('comparison-results');
+        if (compareSection && !String(compareSection.innerHTML || '').trim()) {
+            renderCompareLanding();
+        }
+    }
 }
 
 function parseSpanishNumber(value) {
@@ -998,6 +1007,7 @@ function renderClients() {
                         </td>
                         <td>
                             <button class="btn primary btn-sm" onclick="openClientSupplyInvoice(${rowIndex})">Ver factura</button>
+                            <button class="btn secondary btn-sm" onclick="openCompareFromClientSupply(${rowIndex})" style="margin-left:0.4rem;">Comparar</button>
                         </td>
                     </tr>
                 `;
@@ -1363,17 +1373,17 @@ let compareCurrentInvoiceIndex = null;
 let compareSelectedCommercializers = [];
 let compareScope = 'single';
 
-function openCompareView(index) {
-    const inv = invoices[index];
+function openCompareForInvoice(inv, fromIndex = null) {
     if (!inv) return;
 
     const compatible = commercializers.filter(c => !c.tariffType || c.tariffType === inv.tariffType);
     if (compatible.length === 0) {
-        alert('No hay comercializadoras configuradas. Por favor crea una en la pestaña "Comercializadoras".');
+        alert('No hay comercializadoras configuradas compatibles con la tarifa de esta factura.');
         return;
     }
 
-    compareCurrentInvoiceIndex = index;
+    compareBaseInvoice = inv;
+    compareCurrentInvoiceIndex = fromIndex;
     compareSelectedCommercializers = [];
     compareScope = 'single';
     const scopeEl = document.getElementById('compare-scope');
@@ -1381,6 +1391,67 @@ function openCompareView(index) {
     renderCompareSelectorList();
     modalGuardUntil.compareSelector = Date.now() + 250;
     document.getElementById('compare-selector-modal').classList.remove('hidden');
+}
+
+function openCompareView(index) {
+    const inv = invoices[index];
+    openCompareForInvoice(inv, index);
+}
+
+function openCompareFromClientSupply(rowIndex) {
+    const row = clientSupplyRows[rowIndex];
+    if (!row || !row.invoice) {
+        alert('No hay factura asociada para comparar.');
+        return;
+    }
+    openCompareForInvoice(row.invoice, null);
+}
+
+function renderCompareLanding() {
+    const compareSection = document.getElementById('comparison-results');
+    if (!compareSection) return;
+
+    const all = [...invoices, ...dbInvoices];
+    const unique = [];
+    const seen = new Set();
+    all.forEach(inv => {
+        const key = `${inv.invoiceNum || 'S/N'}|${inv.fileName || ''}|${inv.period || ''}|${inv.cups || ''}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            unique.push(inv);
+        }
+    });
+    compareCatalog = unique;
+
+    if (compareCatalog.length === 0) {
+        compareSection.innerHTML = '<div class="card" style="padding:1rem;">No hay facturas disponibles para iniciar una comparativa.</div>';
+        return;
+    }
+
+    const options = compareCatalog.map((inv, idx) => {
+        const label = `${inv.clientName || 'Cliente'} | ${inv.cups || 'N/D'} | ${inv.tariffType || 'N/D'} | ${inv.invoiceNum || 'S/N'}`;
+        return `<option value="${idx}">${label}</option>`;
+    }).join('');
+
+    compareSection.innerHTML = `
+        <div class="card" style="padding:1rem; margin-bottom:1rem;">
+            <h3 style="margin-bottom:0.75rem;">Iniciar Comparativa</h3>
+            <p style="color:#64748b; margin-bottom:0.75rem;">Puedes iniciarla desde aquí o desde cada suministro en la pestaña Clientes.</p>
+            <div style="display:grid; grid-template-columns: 1fr auto; gap:0.75rem; align-items:center;">
+                <select id="compare-base-select" style="padding:0.55rem; border:1px solid #d1d5db; border-radius:6px;">${options}</select>
+                <button class="btn primary" onclick="startCompareFromTab()">Elegir y comparar</button>
+            </div>
+        </div>
+    `;
+}
+
+function startCompareFromTab() {
+    const select = document.getElementById('compare-base-select');
+    if (!select) return;
+    const idx = Number(select.value);
+    const inv = compareCatalog[idx];
+    if (!inv) return;
+    openCompareForInvoice(inv, null);
 }
 
 function normalizeClientKey(name) {
@@ -1607,7 +1678,7 @@ function renderCompareSelectorList() {
     const list = document.getElementById('compare-selector-list');
     if (!list) return;
 
-    const baseInv = invoices[compareCurrentInvoiceIndex];
+    const baseInv = compareBaseInvoice || invoices[compareCurrentInvoiceIndex];
     if (!baseInv) {
         list.innerHTML = '<p style="color:#999;">No hay factura base para comparar.</p>';
         return;
@@ -1679,7 +1750,7 @@ function doMultipleComparison() {
 }
 
 function renderSingleComparison(invoiceIdx, commercializerIdx) {
-    const inv = invoices[invoiceIdx];
+    const inv = compareBaseInvoice || invoices[invoiceIdx];
     const comm = commercializers[commercializerIdx];
     if (!inv || !comm) return;
 
@@ -1735,7 +1806,7 @@ function renderSingleComparison(invoiceIdx, commercializerIdx) {
 }
 
 function renderMultipleComparison(invoiceIdx, commercializerIndices) {
-    const inv = invoices[invoiceIdx];
+    const inv = compareBaseInvoice || invoices[invoiceIdx];
     if (!inv) return;
 
     const compareSection = document.getElementById('comparison-results');
@@ -1849,7 +1920,7 @@ function clearCurrentInvoices() {
 }
 
 function applyCommercializerProposal(invoiceIdx, commercializerIdx, scopeMode = 'single') {
-    const baseInv = invoices[invoiceIdx];
+    const baseInv = compareBaseInvoice || invoices[invoiceIdx];
     const comm = commercializers[commercializerIdx];
     if (!baseInv || !comm) {
         alert('No se pudo aplicar la propuesta.');
@@ -2212,6 +2283,7 @@ function closeCompareSelectorModal() {
     if (modal) modal.classList.add('hidden');
     compareCurrentInvoiceIndex = null;
     compareSelectedCommercializers = [];
+    compareBaseInvoice = null;
 }
 
 window.addEventListener('click', (event) => {
@@ -2238,6 +2310,8 @@ window.addEventListener('click', (event) => {
 window.openDetailModalFromHistory = openDetailModalFromHistory;
 window.openClientSupplyInvoice = openClientSupplyInvoice;
 window.closeClientSupplyInvoiceModal = closeClientSupplyInvoiceModal;
+window.openCompareFromClientSupply = openCompareFromClientSupply;
+window.startCompareFromTab = startCompareFromTab;
 window.applyCommercializerProposal = applyCommercializerProposal;
 window.updateProposalStatus = updateProposalStatus;
 window.openCommercializerModal = openCommercializerModal;
