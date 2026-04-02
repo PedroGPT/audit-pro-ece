@@ -2402,7 +2402,6 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
             totals,
             simulations
         })}
-        ${buildReportHeaderHtml('Desglose Técnico de la Propuesta', scopeLabel)}
         <div class="card pdf-avoid-break" style="padding:0.85rem; margin-bottom:1rem; background:#f8fafc; border:1px solid #e2e8f0;">
             <div><strong>Comercializadora actual:</strong> ${currentCommercializerLabel}</div>
             <div><strong>Comercializadora propuesta:</strong> ${comm.name}</div>
@@ -2413,7 +2412,6 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
                 <div><small style="color:#64748b;">Total factura (antes/despues)</small><div style="font-weight:700; color:${(totals.oldTotal - totals.newTotal) >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(totals.oldTotal)} / ${formatCurrency(totals.newTotal)}</div></div>
                 <div><small style="color:#64748b;">Ahorro total</small><div style="font-weight:700; color:${(totals.oldTotal - totals.newTotal) >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(totals.oldTotal - totals.newTotal)}</div></div>
             </div>
-            <p style="margin:0.65rem 0 0; color:#475569;">Esta simulacion parte de la factura original ya analizada del cliente. Solo cambian energia y potencia con los nuevos precios; otros conceptos, alquiler y reactiva se mantienen. Los impuestos se recalculan sobre la nueva base.</p>
         </div>
         <div class="card pdf-avoid-break" style="padding:0.85rem; margin-bottom:1rem; border:1px solid #e5e7eb;">
             <h3 style="margin-bottom:0.5rem;">Reglas de transparencia del calculo</h3>
