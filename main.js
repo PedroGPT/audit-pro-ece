@@ -33,6 +33,7 @@ let supabaseClient = null;
 let modalGuardUntil = { detail: 0, commercializer: 0, compareSelector: 0, clientSupply: 0 };
 let clientSupplyRows = [];
 let currentClientSupplyPdfUrl = null;
+let supplyProposals = {};
 
 // Mapa para mantener los objetos File en memoria para el visor de PDF
 window.pendingPdfFiles = new Map();
@@ -243,6 +244,31 @@ function getActivePeriodsByTariff(tariffType, energyItems = []) {
 function sortTariffValue(tariffType) {
     const order = { '2.0': 1, '3.0': 2, '6.1': 3 };
     return order[String(tariffType || '')] || 99;
+}
+
+function buildSupplyKey(inv) {
+    return [
+        normalizeClientKey(inv?.clientName || ''),
+        String(inv?.cups || '').trim().toUpperCase(),
+        String(inv?.tariffType || '').trim(),
+        String(inv?.supplyAddress || '').trim().toLowerCase()
+    ].join('|');
+}
+
+function loadSupplyProposals() {
+    try {
+        supplyProposals = JSON.parse(localStorage.getItem('audit_pro_supply_proposals') || '{}');
+    } catch {
+        supplyProposals = {};
+    }
+}
+
+function saveSupplyProposals() {
+    localStorage.setItem('audit_pro_supply_proposals', JSON.stringify(supplyProposals));
+}
+
+function getSupplyProposal(inv) {
+    return supplyProposals[buildSupplyKey(inv)] || null;
 }
 
 function getConfiguredEnergyPeriodsByTariff(tariffType) {
@@ -876,7 +902,11 @@ function renderClients() {
     const tariffOptions = [...new Set(allInvoices.map(inv => String(inv.tariffType || 'N/D').trim() || 'N/D'))]
         .filter(v => v && v !== 'N/D')
         .sort((a, b) => sortTariffValue(a) - sortTariffValue(b));
-    const commercializerOptions = [...new Set(allInvoices.map(inv => String(inv.comercializadora || 'N/D').trim() || 'N/D'))]
+    const proposalNames = Object.values(supplyProposals || {}).map(p => String(p?.commercializerName || '').trim()).filter(Boolean);
+    const commercializerOptions = [...new Set([
+        ...allInvoices.map(inv => String(inv.comercializadora || 'N/D').trim() || 'N/D'),
+        ...proposalNames
+    ])]
         .filter(v => v && v !== 'N/D')
         .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
 
@@ -908,11 +938,13 @@ function renderClients() {
                 const tariffType = String(inv.tariffType || 'N/D').trim() || 'N/D';
                 const key = `${address}__${cups}__${tariffType}`;
                 if (!supplyMap.has(key)) {
+                    const proposal = getSupplyProposal(inv);
                     supplyMap.set(key, {
                         address,
                         cups,
                         tariffType,
                         comercializadora: inv.comercializadora || 'N/D',
+                        proposedCommercializer: proposal?.commercializerName || null,
                         invoice: inv
                     });
                 }
@@ -927,7 +959,9 @@ function renderClients() {
                 .filter(s => {
                     const matchSupply = !supplyQuery || `${s.address} ${s.cups}`.toLowerCase().includes(supplyQuery);
                     const matchTariff = !activeTariff || s.tariffType === activeTariff;
-                    const matchCommercializer = !activeCommercializer || s.comercializadora === activeCommercializer;
+                    const matchCommercializer = !activeCommercializer
+                        || s.comercializadora === activeCommercializer
+                        || s.proposedCommercializer === activeCommercializer;
                     return matchSupply && matchTariff && matchCommercializer;
                 });
 
@@ -940,7 +974,10 @@ function renderClients() {
                         <td>${s.address}</td>
                         <td>${s.cups}</td>
                         <td>${s.tariffType}</td>
-                        <td>${s.comercializadora}</td>
+                        <td>
+                            <div>${s.comercializadora}</div>
+                            ${s.proposedCommercializer ? `<div style="font-size:0.8rem; color:#059669;">Propuesta: ${s.proposedCommercializer}</div>` : ''}
+                        </td>
                         <td>
                             <button class="btn primary btn-sm" onclick="openClientSupplyInvoice(${rowIndex})">Ver factura</button>
                         </td>
@@ -1333,6 +1370,10 @@ function normalizeClientKey(name) {
 }
 
 function getCompareInvoices(baseInvoice) {
+    return getCompareInvoicesByScope(baseInvoice, compareScope);
+}
+
+function getCompareInvoicesByScope(baseInvoice, scopeMode) {
     if (!baseInvoice) return [];
     const all = [...invoices, ...dbInvoices];
     const unique = [];
@@ -1346,7 +1387,7 @@ function getCompareInvoices(baseInvoice) {
         }
     });
 
-    if (compareScope === 'client-tariff') {
+    if (scopeMode === 'client-tariff') {
         return unique.filter(inv =>
             normalizeClientKey(inv.clientName) === normalizeClientKey(baseInvoice.clientName) &&
             String(inv.tariffType || 'N/D') === String(baseInvoice.tariffType || 'N/D')
@@ -1526,6 +1567,9 @@ function renderSingleComparison(invoiceIdx, commercializerIdx) {
             <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Factura simulada</div><div style="font-size:1.1rem; font-weight:700;">${formatCurrency(metrics.newTotalInvoiceSim)}</div></div>
         </div>
         <p style="color:#64748b; margin:0 0 0.75rem;">La potencia se mantiene en la simulacion; el cambio aplicado es sobre energia para estimar ahorro.</p>
+        <div style="margin-bottom:0.75rem;">
+            <button class="btn primary" onclick="applyCommercializerProposal(${invoiceIdx}, ${commercializerIdx}, '${compareScope}')">Aplicar propuesta: ${comm.name}</button>
+        </div>
         <div style="overflow-x:auto;">
             <table class="modal-table">
                 <thead><tr><th>Factura</th><th>CUPS</th><th>Periodo factura</th><th>Consumo</th><th>Energia antes</th><th>Energia despues</th><th>Ahorro energia</th><th>Total antes</th><th>Total simulado</th></tr></thead>
@@ -1556,10 +1600,11 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
 
     const rankingRows = comms.map(c => {
         const m = computeComparisonMetrics(compareInvoices, c);
-        return { comm: c, metrics: m };
+        const idx = commercializers.findIndex(x => x.id === c.id);
+        return { comm: c, metrics: m, idx };
     }).sort((a, b) => b.metrics.energySaving - a.metrics.energySaving);
 
-    const rowsHtml = rankingRows.map(({ comm, metrics }) => `
+    const rowsHtml = rankingRows.map(({ comm, metrics, idx }) => `
         <tr>
             <td><strong>${comm.name}</strong></td>
             <td>${(comm.tariffType || inv.tariffType || 'N/D')}</td>
@@ -1569,6 +1614,7 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
             <td>${formatCurrency(metrics.oldTotalInvoice)}</td>
             <td>${formatCurrency(metrics.newTotalInvoiceSim)}</td>
             <td style="font-weight:700; color:${metrics.totalSaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(metrics.totalSaving)}</td>
+            <td><button class="btn primary btn-sm" onclick="applyCommercializerProposal(${invoiceIdx}, ${idx}, '${compareScope}')">Aplicar</button></td>
         </tr>
     `).join('');
 
@@ -1588,10 +1634,11 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
                         <th>Total antes</th>
                         <th>Total simulado</th>
                         <th>Ahorro total</th>
+                        <th>Accion</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${rowsHtml || '<tr><td colspan="8">No hay datos para comparar.</td></tr>'}
+                    ${rowsHtml || '<tr><td colspan="9">No hay datos para comparar.</td></tr>'}
                 </tbody>
             </table>
         </div>
@@ -1650,6 +1697,37 @@ function clearCurrentInvoices() {
         renderClients();
         console.log('[Dashboard] Dashboard limpiado');
     }
+}
+
+function applyCommercializerProposal(invoiceIdx, commercializerIdx, scopeMode = 'single') {
+    const baseInv = invoices[invoiceIdx];
+    const comm = commercializers[commercializerIdx];
+    if (!baseInv || !comm) {
+        alert('No se pudo aplicar la propuesta.');
+        return;
+    }
+
+    const targets = getCompareInvoicesByScope(baseInv, scopeMode);
+    if (targets.length === 0) {
+        alert('No hay suministros para aplicar la propuesta.');
+        return;
+    }
+
+    targets.forEach(inv => {
+        const key = buildSupplyKey(inv);
+        supplyProposals[key] = {
+            commercializerId: comm.id,
+            commercializerName: comm.name,
+            tariffType: inv.tariffType || comm.tariffType || 'N/D',
+            appliedAt: new Date().toISOString(),
+            scope: scopeMode
+        };
+    });
+
+    saveSupplyProposals();
+    renderClients();
+
+    alert(`Propuesta aplicada: ${comm.name} en ${targets.length} suministro(s).`);
 }
 
 function openClientSupplyInvoice(rowIndex) {
@@ -1726,6 +1804,7 @@ function closeClientSupplyInvoiceModal() {
 // ========================================================================
 document.addEventListener('DOMContentLoaded', () => {
     initApp();
+    loadSupplyProposals();
 
     // Botones de navegación
     document.querySelectorAll('.nav-item').forEach(btn => {
@@ -1979,6 +2058,7 @@ window.addEventListener('click', (event) => {
 window.openDetailModalFromHistory = openDetailModalFromHistory;
 window.openClientSupplyInvoice = openClientSupplyInvoice;
 window.closeClientSupplyInvoiceModal = closeClientSupplyInvoiceModal;
+window.applyCommercializerProposal = applyCommercializerProposal;
 window.openCommercializerModal = openCommercializerModal;
 window.closeCommercializerModal = closeCommercializerModal;
 window.saveCommercializer = saveCommercializer;
