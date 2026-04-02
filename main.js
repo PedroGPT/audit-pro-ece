@@ -640,10 +640,11 @@ function fallbackParseInvoiceText(text, fileName) {
     const textLower = text.toLowerCase();
     const invoice = {
         fileName,
-    let viewerHtml = '';
+        invoiceNum: 'S/N',
         clientName: 'Desconocido',
         supplyAddress: 'N/D',
-        viewerHtml = '<div id="client-pdf-pages" class="card" style="padding:0.75rem; min-height: 240px;">Cargando PDF completo...</div>';
+        comercializadora: 'N/D',
+        tariffType: 'N/D',
         period: 'N/D',
         consumption: 0,
         energyCost: 0,
