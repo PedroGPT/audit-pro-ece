@@ -2041,6 +2041,7 @@ function buildInvoiceTransparencySimulation(inv, comm) {
     return {
         invoiceNum: inv.invoiceNum || 'S/N',
         clientName: inv.clientName || 'N/D',
+        currentCommercializer: inv.comercializadora || 'N/D',
         cups: inv.cups || 'N/D',
         supplyAddress: inv.supplyAddress || 'N/D',
         period: inv.period || 'N/D',
@@ -2106,6 +2107,9 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
         return acc;
     }, { oldEnergy: 0, newEnergy: 0, oldPower: 0, newPower: 0, oldTotal: 0, newTotal: 0 });
 
+    const currentCommercializers = [...new Set(simulations.map(s => String(s.currentCommercializer || 'N/D').trim()).filter(Boolean))];
+    const currentCommercializerLabel = currentCommercializers.length > 0 ? currentCommercializers.join(' | ') : 'N/D';
+
     const involvedSuppliesRows = simulations.map(s => `
         <tr>
             <td>${s.invoiceNum}</td>
@@ -2113,6 +2117,8 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
             <td>${s.cups}</td>
             <td>${formatBillingPeriod(s.period)}</td>
             <td>${s.tariffType}</td>
+            <td>${s.currentCommercializer || 'N/D'}</td>
+            <td>${comm.name}</td>
             <td>${formatCurrency(s.oldTotal)}</td>
         </tr>
     `).join('');
@@ -2123,11 +2129,11 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
             <div style="overflow-x:auto;">
                 <table class="modal-table">
                     <thead>
-                        <tr><th>Factura</th><th>Suministro</th><th>CUPS</th><th>Periodo</th><th>Tarifa</th><th>Total actual</th></tr>
+                        <tr><th>Factura</th><th>Suministro</th><th>CUPS</th><th>Periodo</th><th>Tarifa</th><th>Comercializadora actual</th><th>Comercializadora propuesta</th><th>Total actual</th></tr>
                     </thead>
                     <tbody>
-                        ${involvedSuppliesRows || '<tr><td colspan="6">No hay suministros implicados.</td></tr>'}
-                        <tr style="font-weight:700; background:#f8fafc;"><td colspan="5" style="text-align:right;">Total actual agregado</td><td>${formatCurrency(totals.oldTotal)}</td></tr>
+                        ${involvedSuppliesRows || '<tr><td colspan="8">No hay suministros implicados.</td></tr>'}
+                        <tr style="font-weight:700; background:#f8fafc;"><td colspan="7" style="text-align:right;">Total actual agregado</td><td>${formatCurrency(totals.oldTotal)}</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -2257,6 +2263,7 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
     const scopeLabel = scopeMode === 'client-tariff' ? 'Multisuministro / Multipunto (mismo cliente y tarifa)' : 'Suministro individual';
     body.innerHTML = `
         <div class="card" style="padding:0.85rem; margin-bottom:1rem; background:#f8fafc; border:1px solid #e2e8f0;">
+            <div><strong>Comercializadora actual:</strong> ${currentCommercializerLabel}</div>
             <div><strong>Comercializadora propuesta:</strong> ${comm.name}</div>
             <div><strong>Alcance:</strong> ${scopeLabel}</div>
             <div style="margin-top:0.5rem; display:grid; grid-template-columns: repeat(4, minmax(180px,1fr)); gap:0.6rem;">
