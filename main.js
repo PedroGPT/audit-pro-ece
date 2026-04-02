@@ -896,18 +896,20 @@ function renderClients() {
 
             if (supplies.length === 0) return '';
 
-            const rows = supplies.map(s => `
-                ${(() => { clientSupplyRows.push({ supply: s, invoice: s.invoice }); return ''; })()}
-                <tr>
-                    <td>${s.address}</td>
-                    <td>${s.cups}</td>
-                    <td>${s.tariffType}</td>
-                    <td>${s.comercializadora}</td>
-                    <td>
-                        <button class="btn primary btn-sm" onclick="openClientSupplyInvoice(${clientSupplyRows.length - 1})">Ver factura</button>
-                    </td>
-                </tr>
-            `).join('');
+            const rows = supplies.map(s => {
+                const rowIndex = clientSupplyRows.push({ supply: s, invoice: s.invoice }) - 1;
+                return `
+                    <tr>
+                        <td>${s.address}</td>
+                        <td>${s.cups}</td>
+                        <td>${s.tariffType}</td>
+                        <td>${s.comercializadora}</td>
+                        <td>
+                            <button class="btn primary btn-sm" onclick="openClientSupplyInvoice(${rowIndex})">Ver factura</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
 
             return `
                 <div class="card" style="margin-bottom: 1rem; padding: 1rem;">
@@ -1511,6 +1513,7 @@ function clearCurrentInvoices() {
 }
 
 function openClientSupplyInvoice(rowIndex) {
+    console.log('[Clients] openClientSupplyInvoice', rowIndex, clientSupplyRows.length);
     const row = clientSupplyRows[rowIndex];
     if (!row || !row.invoice) {
         alert('No hay factura asociada disponible para este suministro.');
