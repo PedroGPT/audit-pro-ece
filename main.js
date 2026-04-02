@@ -1651,7 +1651,7 @@ function renderCompareLanding() {
     }
 
     const options = compareCatalog.map((inv, idx) => {
-        const label = `${inv.clientName || 'Cliente'} | ${inv.cups || 'N/D'} | ${inv.tariffType || 'N/D'} | ${inv.invoiceNum || 'S/N'}`;
+        const label = `${inv.clientName || 'Cliente'} | ${getShortSupplyAddress(inv.supplyAddress)} | ${inv.cups || 'N/D'} | ${inv.tariffType || 'N/D'} | ${inv.invoiceNum || 'S/N'}`;
         return `<option value="${idx}">${label}</option>`;
     }).join('');
 
@@ -1678,6 +1678,25 @@ function startCompareFromTab() {
 
 function normalizeClientKey(name) {
     return String(name || '').trim().toLowerCase();
+}
+
+function getShortSupplyAddress(address, maxLen = 48) {
+    const raw = String(address || '').trim();
+    if (!raw || raw === 'N/D') return 'Suministro N/D';
+
+    const abbreviated = raw
+        .replace(/\bavenida\b/gi, 'Av.')
+        .replace(/\bcalle\b/gi, 'C/')
+        .replace(/\bcarretera\b/gi, 'Ctra.')
+        .replace(/\bplaza\b/gi, 'Pza.')
+        .replace(/\bpoligono\b/gi, 'Pol.')
+        .replace(/\burbanizacion\b/gi, 'Urb.')
+        .replace(/\bn[úu]mero\b/gi, 'Num.')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (abbreviated.length <= maxLen) return abbreviated;
+    return `${abbreviated.slice(0, maxLen - 1).trim()}...`;
 }
 
 function getCompareInvoices(baseInvoice) {
@@ -1739,6 +1758,7 @@ function computeComparisonMetrics(compareInvoices, comm) {
         invoiceRows.push({
             invoiceNum: inv.invoiceNum || 'S/N',
             cups: inv.cups || 'N/D',
+            supplyAddress: inv.supplyAddress || 'N/D',
             period: inv.period || 'N/D',
             consumption,
             oldEnergy,
@@ -1964,6 +1984,7 @@ function buildInvoiceTransparencySimulation(inv, comm) {
         invoiceNum: inv.invoiceNum || 'S/N',
         clientName: inv.clientName || 'N/D',
         cups: inv.cups || 'N/D',
+        supplyAddress: inv.supplyAddress || 'N/D',
         period: inv.period || 'N/D',
         tariffType: inv.tariffType || 'N/D',
         taxName: isIgic ? 'IGIC' : 'IVA',
@@ -2057,7 +2078,7 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
         return `
             <div class="card" style="padding:1rem; margin-bottom:1rem; border:1px solid #dbeafe;">
                 <h3 style="margin-bottom:0.5rem;">Factura ${s.invoiceNum}</h3>
-                <p style="margin:0 0 0.65rem; color:#334155;"><strong>Cliente:</strong> ${s.clientName} | <strong>CUPS:</strong> ${s.cups} | <strong>Periodo:</strong> ${s.period} | <strong>Tarifa:</strong> ${s.tariffType}</p>
+                <p style="margin:0 0 0.65rem; color:#334155;"><strong>Cliente:</strong> ${s.clientName} | <strong>Suministro:</strong> ${getShortSupplyAddress(s.supplyAddress)} | <strong>CUPS:</strong> ${s.cups} | <strong>Periodo:</strong> ${s.period} | <strong>Tarifa:</strong> ${s.tariffType}</p>
 
                 <h4 style="margin:0.75rem 0 0.5rem;">1) Energia por periodos</h4>
                 <div style="overflow-x:auto; margin-bottom:0.75rem;">
@@ -2391,7 +2412,10 @@ function renderSingleComparison(invoiceIdx, commercializerIdx) {
     const rowsHtml = metrics.invoiceRows.map(r => `
         <tr>
             <td>${r.invoiceNum}</td>
-            <td>${r.cups}</td>
+            <td>
+                <div>${getShortSupplyAddress(r.supplyAddress)}</div>
+                <small style="color:#64748b;">CUPS: ${r.cups}</small>
+            </td>
             <td>${r.period}</td>
             <td>${r.consumption.toFixed(2)} kWh</td>
             <td>${formatCurrency(r.oldEnergy)}</td>
@@ -2418,7 +2442,7 @@ function renderSingleComparison(invoiceIdx, commercializerIdx) {
         </div>
         <div style="overflow-x:auto;">
             <table class="modal-table">
-                <thead><tr><th>Factura</th><th>CUPS</th><th>Periodo factura</th><th>Consumo</th><th>Energia antes</th><th>Energia despues</th><th>Ahorro energia</th><th>Total antes</th><th>Total simulado</th></tr></thead>
+                <thead><tr><th>Factura</th><th>Suministro</th><th>Periodo factura</th><th>Consumo</th><th>Energia antes</th><th>Energia despues</th><th>Ahorro energia</th><th>Total antes</th><th>Total simulado</th></tr></thead>
                 <tbody>
                     ${rowsHtml || '<tr><td colspan="9">No hay datos de energia para comparar.</td></tr>'}
                     <tr class="mirror-row-total"><td colspan="4" style="text-align:right;">Totales</td><td>${formatCurrency(metrics.oldEnergyCost)}</td><td>${formatCurrency(metrics.newEnergyCost)}</td><td style="font-weight:700; color:${metrics.energySaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(metrics.energySaving)}</td><td>${formatCurrency(metrics.oldTotalInvoice)}</td><td>${formatCurrency(metrics.newTotalInvoiceSim)}</td></tr>
@@ -2462,6 +2486,7 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
         return {
             invoiceNum: item.invoiceNum || 'S/N',
             cups: item.cups || 'N/D',
+            supplyAddress: item.supplyAddress || 'N/D',
             period: item.period || 'N/D',
             consumption,
             energyCost,
@@ -2481,7 +2506,10 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
     const baselineRowsHtml = baselineBySupply.map(row => `
         <tr>
             <td>${row.invoiceNum}</td>
-            <td>${row.cups}</td>
+            <td>
+                <div>${getShortSupplyAddress(row.supplyAddress)}</div>
+                <small style="color:#64748b;">CUPS: ${row.cups}</small>
+            </td>
             <td>${row.period}</td>
             <td>${row.consumption.toFixed(2)} kWh</td>
             <td>${formatCurrency(row.energyCost)}</td>
@@ -2508,7 +2536,10 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
     const bestRowsHtml = bestScenarioBySupply.map(row => `
         <tr>
             <td>${row.invoiceNum}</td>
-            <td>${row.cups}</td>
+            <td>
+                <div>${getShortSupplyAddress(row.supplyAddress)}</div>
+                <small style="color:#64748b;">CUPS: ${row.cups}</small>
+            </td>
             <td>${formatCurrency(row.oldEnergyReference)}</td>
             <td>${formatCurrency(row.newEnergy)}</td>
             <td style="color:${row.powerImpact >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(row.powerImpact)}</td>
@@ -2555,7 +2586,7 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
                     <thead>
                         <tr>
                             <th>Factura</th>
-                            <th>CUPS</th>
+                            <th>Suministro</th>
                             <th>Periodo</th>
                             <th>Consumo</th>
                             <th>Energia actual</th>
@@ -2591,7 +2622,7 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
                     <thead>
                         <tr>
                             <th>Factura</th>
-                            <th>CUPS</th>
+                            <th>Suministro</th>
                             <th>Energia antes</th>
                             <th>Energia despues</th>
                             <th>Impacto potencia</th>
