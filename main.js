@@ -2155,13 +2155,12 @@ function buildReportCoverHtml({
 
     return `
         <section class="card pdf-cover-page" style="padding:1.2rem; margin-bottom:1rem; border:1px solid #cbd5e1; background:linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);">
-            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; margin-bottom:1rem; flex-wrap:wrap;">
+            <div style="display:flex; align-items:flex-start; gap:1.5rem; margin-bottom:1rem;">
+                <img src="logo.png" alt="Logo ECE Consultores" style="height:80px; width:auto; object-fit:contain; flex-shrink:0;" onerror="this.style.display='none'">
                 <div>
-                    <div style="font-size:0.78rem; letter-spacing:0.08em; text-transform:uppercase; color:#64748b; margin-bottom:0.35rem;">ECE Consultores</div>
                     <h1 style="margin:0; font-size:2rem; line-height:1.1; color:#0f172a;">Propuesta de Mejora de Precios</h1>
                     <p style="margin:0.45rem 0 0; color:#475569; font-size:1rem; max-width:760px;">Se presenta una propuesta comparativa sobre la factura analizada, manteniendo la estructura real del suministro y recalculando el impacto económico estimado con una nueva oferta de precios.</p>
                 </div>
-                <img src="logo.png" alt="Logo ECE Consultores" style="height:64px; width:auto; object-fit:contain;" onerror="this.style.display='none'">
             </div>
 
             <div style="display:grid; grid-template-columns: repeat(2, minmax(260px, 1fr)); gap:0.75rem; margin-bottom:1rem;">
@@ -2170,9 +2169,8 @@ function buildReportCoverHtml({
                     <div><strong>Cliente:</strong> ${clientName}</div>
                     <div><strong>Tarifa:</strong> ${tariffType}</div>
                     <div><strong>Periodo analizado:</strong> ${periodLabel}</div>
-                    <div><strong>Alcance:</strong> ${scopeLabel}</div>
+                    <div><strong>${supplyCount} suministro${supplyCount !== 1 ? 's' : ''}</strong></div>
                     <div><strong>Fecha de emisión:</strong> ${generatedAt}</div>
-                    <div><strong>Suministros analizados:</strong> ${supplyCount}</div>
                 </div>
                 <div class="card pdf-avoid-break" style="padding:0.85rem; border:1px solid #dbeafe; background:#ffffff; margin:0;">
                     <div style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.06em; color:#64748b; margin-bottom:0.45rem;">Propuesta comercial</div>
