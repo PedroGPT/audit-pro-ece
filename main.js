@@ -2845,7 +2845,7 @@ function renderCompareSelectorList() {
 
     const compatibleCommercializers = commercializers
         .map((c, idx) => ({ c, idx }))
-        .filter(item => !item.c.tariffType || item.c.tariffType === baseInv.tariffType);
+        .filter(item => !item.c.tariffType || baseInv.tariffType?.startsWith(String(item.c.tariffType).trim()));
 
     const html = compatibleCommercializers.map(({ c, idx }) => {
         const pricesPreview = getConfiguredEnergyPeriodsByTariff(c.tariffType || baseInv.tariffType || '2.0')
