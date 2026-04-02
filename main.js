@@ -175,6 +175,25 @@ function detectTariffTypeFromText(text) {
     return 'N/D';
 }
 
+function getActivePeriodsByTariff(tariffType, energyItems = []) {
+    const t = String(tariffType || '').trim();
+    if (t === '2.0') return [1, 2];
+    if (t === '3.0') return [1, 2, 3];
+    if (t === '6.1') return [1, 2, 3, 4, 5, 6];
+
+    const detected = (energyItems || [])
+        .filter(item => Number(item.kwh || 0) > 0)
+        .map(item => Number(item.period || 0))
+        .filter(p => p >= 1 && p <= 6);
+
+    return [...new Set(detected)].sort((a, b) => a - b);
+}
+
+function sortTariffValue(tariffType) {
+    const order = { '2.0': 1, '3.0': 2, '6.1': 3 };
+    return order[String(tariffType || '')] || 99;
+}
+
 function extractEnergyPeriodItems(text) {
     const raw = String(text || '').replace(/×/g, '*').replace(/x/g, '*');
     const byPeriod = {};
@@ -383,6 +402,7 @@ async function processFiles(files) {
 
     if (invoices.length > 0) {
         renderAuditDashboard();
+        renderClients();
         switchView('audit-view');
         // Mostrar el dashboard después del procesamiento
         const dashboard = document.getElementById('dashboard');
@@ -721,6 +741,7 @@ function saveToDatabase(invoiceRecords) {
     try {
         dbInvoices = [...invoiceRecords, ...dbInvoices];
         localStorage.setItem('audit_pro_db', JSON.stringify(dbInvoices));
+        renderClients();
 
         if (supabaseClient) {
             supabaseClient.from('invoices').insert(invoiceRecords).then(({ error }) => {
@@ -749,6 +770,84 @@ function loadLocalStore() {
         dbInvoices = JSON.parse(stored);
         console.log("[LocalDB] Cargado:", dbInvoices.length, "registros");
     }
+    renderClients();
+}
+
+function renderClients() {
+    const clientsList = document.getElementById('clients-list');
+    if (!clientsList) return;
+
+    const allInvoices = [...dbInvoices, ...invoices];
+    if (allInvoices.length === 0) {
+        clientsList.innerHTML = '<div class="card" style="padding:1rem;">No hay clientes todavía. Sube facturas para generarlos automáticamente.</div>';
+        return;
+    }
+
+    const byClient = new Map();
+    allInvoices.forEach(inv => {
+        const clientName = String(inv.clientName || 'Desconocido').trim() || 'Desconocido';
+        if (!byClient.has(clientName)) byClient.set(clientName, []);
+        byClient.get(clientName).push(inv);
+    });
+
+    const html = [...byClient.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0], 'es', { sensitivity: 'base' }))
+        .map(([clientName, clientInvoices]) => {
+            const supplyMap = new Map();
+            clientInvoices.forEach(inv => {
+                const address = String(inv.supplyAddress || 'N/D').trim() || 'N/D';
+                const cups = String(inv.cups || 'N/D').trim() || 'N/D';
+                const tariffType = String(inv.tariffType || 'N/D').trim() || 'N/D';
+                const key = `${address}__${cups}__${tariffType}`;
+                if (!supplyMap.has(key)) {
+                    supplyMap.set(key, {
+                        address,
+                        cups,
+                        tariffType,
+                        comercializadora: inv.comercializadora || 'N/D'
+                    });
+                }
+            });
+
+            const supplies = [...supplyMap.values()]
+                .sort((a, b) => {
+                    const byAddress = a.address.localeCompare(b.address, 'es', { sensitivity: 'base' });
+                    if (byAddress !== 0) return byAddress;
+                    return sortTariffValue(a.tariffType) - sortTariffValue(b.tariffType);
+                });
+
+            const rows = supplies.map(s => `
+                <tr>
+                    <td>${s.address}</td>
+                    <td>${s.cups}</td>
+                    <td>${s.tariffType}</td>
+                    <td>${s.comercializadora}</td>
+                </tr>
+            `).join('');
+
+            return `
+                <div class="card" style="margin-bottom: 1rem; padding: 1rem;">
+                    <h3 style="margin-bottom:0.75rem;">${clientName}</h3>
+                    <div style="overflow-x:auto;">
+                        <table class="modal-table">
+                            <thead>
+                                <tr>
+                                    <th>Direccion de suministro</th>
+                                    <th>CUPS</th>
+                                    <th>Tarifa</th>
+                                    <th>Comercializadora</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${rows || '<tr><td colspan="4">Sin suministros</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+    clientsList.innerHTML = html;
 }
 
 // ========================================================================
@@ -1165,7 +1264,8 @@ function renderSingleComparison(invoiceIdx, commercializerIdx) {
     const compareSection = document.getElementById('comparison-results');
     if (!compareSection) return;
 
-    const currentEnergy = inv.energyPeriodItems || [];
+    const allowedPeriods = getActivePeriodsByTariff(inv.tariffType, inv.energyPeriodItems || []);
+    const currentEnergy = (inv.energyPeriodItems || []).filter(item => allowedPeriods.includes(Number(item.period)));
     const periodRows = currentEnergy.map(item => {
         const period = item.period;
         const currentPrice = Number(item.unitPriceKwh || 0);
@@ -1182,7 +1282,7 @@ function renderSingleComparison(invoiceIdx, commercializerIdx) {
         </tr>`;
     }).join('');
 
-    const currentCost = Number(inv.energyCost || 0);
+    const currentCost = currentEnergy.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0);
     const commCost = currentEnergy.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(comm.energyPrices[item.period] || 0)), 0);
     const totalDiff = commCost - currentCost;
     const totalDiffSign = totalDiff > 0 ? '+' : '';
@@ -1190,10 +1290,10 @@ function renderSingleComparison(invoiceIdx, commercializerIdx) {
 
     const html = `
         <h3>Comparativa Individual: ${inv.invoiceNum || 'S/N'}</h3>
-        <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Factura:</strong> ${inv.comercializadora || 'N/D'} | <strong>Comparar con:</strong> ${comm.name}</p>
+        <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Factura:</strong> ${inv.comercializadora || 'N/D'} | <strong>Tarifa:</strong> ${inv.tariffType || 'N/D'} | <strong>Comparar con:</strong> ${comm.name}</p>
         <p><strong>Análisis de energía (€/kWh por periodo)</strong></p>
         <table class="modal-table">
-            <thead><tr><th>Periodo</th><th>Consumo</th><th>Precio factua</th><th>Precio ${comm.name}</th><th>Diferencia</th></tr></thead>
+            <thead><tr><th>Periodo</th><th>Consumo</th><th>Precio factura</th><th>Precio ${comm.name}</th><th>Diferencia</th></tr></thead>
             <tbody>
                 ${periodRows || '<tr><td colspan="5">No hay periodos</td></tr>'}
                 <tr class="mirror-row-total"><td colspan="2">Coste Total Energía</td><td>${formatCurrency(currentCost)}</td><td>${formatCurrency(commCost)}</td><td style="color: ${totalDiffColor}; font-weight: 600;">${totalDiffSign}${formatCurrency(totalDiff)}</td></tr>
@@ -1212,7 +1312,8 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
     const compareSection = document.getElementById('comparison-results');
     if (!compareSection) return;
 
-    const currentEnergy = inv.energyPeriodItems || [];
+    const allowedPeriods = getActivePeriodsByTariff(inv.tariffType, inv.energyPeriodItems || []);
+    const currentEnergy = (inv.energyPeriodItems || []).filter(item => allowedPeriods.includes(Number(item.period)));
 
     // Construir tabla con columnas para cada comercializadora
     const comms = commercializerIndices.map(idx => commercializers[idx]);
@@ -1236,7 +1337,7 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
     }).join('');
 
     // Fila de totales
-    const currentCost = Number(inv.energyCost || 0);
+    const currentCost = currentEnergy.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0);
     const commTotalCells = comms.map(c => {
         const commCost = currentEnergy.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(c.energyPrices[item.period] || 0)), 0);
         const totalDiff = commCost - currentCost;
@@ -1247,7 +1348,7 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
 
     const html = `
         <h3>Comparativa Múltiple: ${inv.invoiceNum || 'S/N'}</h3>
-        <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Consumo:</strong> ${inv.consumption?.toFixed(2) || 0} kWh</p>
+        <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Tarifa:</strong> ${inv.tariffType || 'N/D'} | <strong>Consumo:</strong> ${inv.consumption?.toFixed(2) || 0} kWh</p>
         <p><strong>Comparativa de precios de energía</strong> (€/kWh por periodo)</p>
         <div style="overflow-x: auto;">
             <table class="modal-table">
@@ -1282,6 +1383,7 @@ function deleteHistoryItem(index) {
         dbInvoices.splice(index, 1);
         localStorage.setItem('audit_pro_db', JSON.stringify(dbInvoices));
         renderHistory();
+        renderClients();
         console.log(`[History] Eliminada factura en índice ${index}`);
     }
 }
@@ -1291,6 +1393,7 @@ function clearAllHistory() {
         dbInvoices = [];
         localStorage.removeItem('audit_pro_db');
         renderHistory();
+        renderClients();
         console.log('[History] Historial vaciado completamente');
     }
 }
@@ -1306,6 +1409,7 @@ function deleteCurrentInvoice(index) {
         } else {
             renderAuditDashboard();
         }
+        renderClients();
         console.log(`[Dashboard] Eliminada factura en índice ${index}`);
     }
 }
@@ -1316,6 +1420,7 @@ function clearCurrentInvoices() {
         const dashboard = document.getElementById('dashboard');
         if (dashboard) dashboard.classList.add('hidden');
         switchView('audit-view');
+        renderClients();
         console.log('[Dashboard] Dashboard limpiado');
     }
 }
@@ -1341,6 +1446,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Cargar Historial
     renderHistory();
+    renderClients();
 
     // Cargar Comercializadoras
     loadCommercializers();
