@@ -2106,6 +2106,34 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
         return acc;
     }, { oldEnergy: 0, newEnergy: 0, oldPower: 0, newPower: 0, oldTotal: 0, newTotal: 0 });
 
+    const involvedSuppliesRows = simulations.map(s => `
+        <tr>
+            <td>${s.invoiceNum}</td>
+            <td>${getShortSupplyAddress(s.supplyAddress)}</td>
+            <td>${s.cups}</td>
+            <td>${formatBillingPeriod(s.period)}</td>
+            <td>${s.tariffType}</td>
+            <td>${formatCurrency(s.oldTotal)}</td>
+        </tr>
+    `).join('');
+
+    const involvedSuppliesCard = scopeMode === 'client-tariff' ? `
+        <div class="card" style="padding:0.85rem; margin-bottom:1rem; border:1px solid #e5e7eb;">
+            <h3 style="margin-bottom:0.5rem;">Suministros implicados en el informe multipunto</h3>
+            <div style="overflow-x:auto;">
+                <table class="modal-table">
+                    <thead>
+                        <tr><th>Factura</th><th>Suministro</th><th>CUPS</th><th>Periodo</th><th>Tarifa</th><th>Total actual</th></tr>
+                    </thead>
+                    <tbody>
+                        ${involvedSuppliesRows || '<tr><td colspan="6">No hay suministros implicados.</td></tr>'}
+                        <tr style="font-weight:700; background:#f8fafc;"><td colspan="5" style="text-align:right;">Total actual agregado</td><td>${formatCurrency(totals.oldTotal)}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    ` : '';
+
     const blocks = simulations.map(s => {
         const energyRowsHtml = s.energyRows.map(r => `
             <tr>
@@ -2257,6 +2285,7 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
                 </table>
             </div>
         </div>
+        ${involvedSuppliesCard}
         ${blocks}
     `;
 
