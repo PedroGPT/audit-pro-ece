@@ -30,6 +30,7 @@ let invoices = [];
 let dbInvoices = []; 
 let currentAudit = null;
 let supabaseClient = null;
+let modalGuardUntil = { detail: 0, commercializer: 0, compareSelector: 0 };
 
 // Mapa para mantener los objetos File en memoria para el visor de PDF
 window.pendingPdfFiles = new Map();
@@ -998,6 +999,7 @@ function openDetailModal(inv) {
     if (!modal || !body) return;
 
     body.innerHTML = buildInvoiceDetailTable(inv);
+    modalGuardUntil.detail = Date.now() + 250;
     modal.classList.remove('hidden');
 }
 
@@ -1020,6 +1022,7 @@ function openDetailModalFromHistory(index) {
         return;
     }
     body.innerHTML = buildInvoiceDetailTable(inv);
+    modalGuardUntil.detail = Date.now() + 250;
     modal.classList.remove('hidden');
     console.log('[History] Abierto detalle para', inv.invoiceNum);
 }
@@ -1044,6 +1047,7 @@ function closeDetailModal() {
 window.addEventListener('click', (event) => {
     const modal = document.getElementById('invoice-detail-modal');
     if (!modal || modal.classList.contains('hidden')) return;
+    if (Date.now() < modalGuardUntil.detail) return;
     const content = modal.querySelector('.modal-content');
     if (content && !content.contains(event.target)) {
         closeDetailModal();
@@ -1066,6 +1070,7 @@ function openCompareView(index) {
     compareCurrentInvoiceIndex = index;
     compareSelectedCommercializers = [];
     renderCompareSelectorList();
+    modalGuardUntil.compareSelector = Date.now() + 250;
     document.getElementById('compare-selector-modal').classList.remove('hidden');
 }
 
@@ -1406,6 +1411,7 @@ function openCommercializerModal(indexToEdit = null) {
         });
     }
 
+    modalGuardUntil.commercializer = Date.now() + 250;
     modal.classList.remove('hidden');
 }
 
@@ -1473,6 +1479,7 @@ function deleteCommercializer(index) {
 window.addEventListener('click', (event) => {
     const modal = document.getElementById('commercializer-modal');
     if (!modal || modal.classList.contains('hidden')) return;
+    if (Date.now() < modalGuardUntil.commercializer) return;
     const content = modal.querySelector('.modal-content');
     if (content && !content.contains(event.target)) {
         closeCommercializerModal();
@@ -1489,6 +1496,7 @@ function closeCompareSelectorModal() {
 window.addEventListener('click', (event) => {
     const modal = document.getElementById('compare-selector-modal');
     if (!modal || modal.classList.contains('hidden')) return;
+    if (Date.now() < modalGuardUntil.compareSelector) return;
     const content = modal.querySelector('.modal-content');
     if (content && !content.contains(event.target)) {
         closeCompareSelectorModal();
