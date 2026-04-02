@@ -2544,6 +2544,16 @@ async function downloadComparisonTransparencyHtml() {
         return;
     }
 
+    const clientNameMatch = String(source.innerHTML || '').match(/<strong>Cliente:<\/strong>\s*([^<\n]+)/i);
+    const clientName = (clientNameMatch ? clientNameMatch[1] : '').trim() || 'cliente';
+    const safeClientName = clientName
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9\-_\s]/g, '')
+        .trim()
+        .replace(/\s+/g, '-')
+        .toLowerCase() || 'cliente';
+
     let logoSrc = `${window.location.origin}/logo.png`;
     try {
         const resp = await fetch(logoSrc);
@@ -2569,7 +2579,7 @@ async function downloadComparisonTransparencyHtml() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Informe Transparente ECE Consultores</title>
+    <title>Propuesta de Mejora de Precios - ${clientName}</title>
     <style>
         * { box-sizing: border-box; }
         body {
@@ -2614,8 +2624,8 @@ async function downloadComparisonTransparencyHtml() {
 </html>`;
 
     const ts = new Date();
-    const safeDate = `${ts.getFullYear()}-${String(ts.getMonth() + 1).padStart(2, '0')}-${String(ts.getDate()).padStart(2, '0')}`;
-    const filename = `informe-transparente-${safeDate}.html`;
+    const safeDate = `${String(ts.getDate()).padStart(2, '0')}-${String(ts.getMonth() + 1).padStart(2, '0')}-${ts.getFullYear()}`;
+    const filename = `propuesta-${safeClientName}-${safeDate}.html`;
 
     const blob = new Blob([exportHtml], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
