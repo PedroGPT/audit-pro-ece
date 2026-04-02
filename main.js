@@ -776,6 +776,7 @@ function renderClients() {
     const clientsList = document.getElementById('clients-list');
     if (!clientsList) return;
 
+    const filterClientEl = document.getElementById('clients-filter-name');
     const filterSupplyEl = document.getElementById('clients-filter-supply');
     const filterTariffEl = document.getElementById('clients-filter-tariff');
     const filterCommercializerEl = document.getElementById('clients-filter-commercializer');
@@ -786,11 +787,21 @@ function renderClients() {
         return;
     }
 
+    const selectedClient = filterClientEl ? filterClientEl.value : '';
     const selectedTariff = filterTariffEl ? filterTariffEl.value : '';
     const selectedCommercializer = filterCommercializerEl ? filterCommercializerEl.value : '';
     const supplyQuery = String(filterSupplyEl?.value || '').trim().toLowerCase();
 
     // Cargar opciones de filtros dinamicos manteniendo seleccion actual
+    const byClient = new Map();
+    allInvoices.forEach(inv => {
+        const clientName = String(inv.clientName || 'Desconocido').trim() || 'Desconocido';
+        if (!byClient.has(clientName)) byClient.set(clientName, []);
+        byClient.get(clientName).push(inv);
+    });
+
+    const clientOptions = [...byClient.keys()]
+        .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
     const tariffOptions = [...new Set(allInvoices.map(inv => String(inv.tariffType || 'N/D').trim() || 'N/D'))]
         .filter(v => v && v !== 'N/D')
         .sort((a, b) => sortTariffValue(a) - sortTariffValue(b));
@@ -798,6 +809,10 @@ function renderClients() {
         .filter(v => v && v !== 'N/D')
         .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
 
+    if (filterClientEl) {
+        filterClientEl.innerHTML = '<option value="">Todos los clientes</option>' + clientOptions.map(v => `<option value="${v}">${v}</option>`).join('');
+        filterClientEl.value = clientOptions.includes(selectedClient) ? selectedClient : '';
+    }
     if (filterTariffEl) {
         filterTariffEl.innerHTML = '<option value="">Todas las tarifas</option>' + tariffOptions.map(v => `<option value="${v}">${v}</option>`).join('');
         filterTariffEl.value = tariffOptions.includes(selectedTariff) ? selectedTariff : '';
@@ -807,19 +822,14 @@ function renderClients() {
         filterCommercializerEl.value = commercializerOptions.includes(selectedCommercializer) ? selectedCommercializer : '';
     }
 
+    const activeClient = filterClientEl ? filterClientEl.value : '';
     const activeTariff = filterTariffEl ? filterTariffEl.value : '';
     const activeCommercializer = filterCommercializerEl ? filterCommercializerEl.value : '';
-
-    const byClient = new Map();
-    allInvoices.forEach(inv => {
-        const clientName = String(inv.clientName || 'Desconocido').trim() || 'Desconocido';
-        if (!byClient.has(clientName)) byClient.set(clientName, []);
-        byClient.get(clientName).push(inv);
-    });
 
     const html = [...byClient.entries()]
         .sort((a, b) => a[0].localeCompare(b[0], 'es', { sensitivity: 'base' }))
         .map(([clientName, clientInvoices]) => {
+            if (activeClient && clientName !== activeClient) return '';
             const supplyMap = new Map();
             clientInvoices.forEach(inv => {
                 const address = String(inv.supplyAddress || 'N/D').trim() || 'N/D';
