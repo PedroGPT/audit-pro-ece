@@ -163,6 +163,15 @@
                     <input type="text" id="commercializer-name" placeholder="ej: Endesa, Iberdrola, etc." style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; font-size: 1rem;">
                 </div>
 
+                <div style="margin-bottom: 1rem;">
+                    <label>Tipo de tarifa:</label>
+                    <select id="commercializer-tariff-type" onchange="updateCommercializerPeriodFields()" style="width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; font-size: 1rem;">
+                        <option value="2.0">2.0</option>
+                        <option value="3.0">3.0</option>
+                        <option value="6.1">6.1</option>
+                    </select>
+                </div>
+
                 <fieldset style="border: 1px solid #e5e7eb; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
                     <legend style="padding: 0 0.5rem; font-weight: 600;">Precios de Energía (€/kWh)</legend>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">

@@ -193,6 +193,13 @@ function sortTariffValue(tariffType) {
     return order[String(tariffType || '')] || 99;
 }
 
+function getConfiguredPeriodsByTariff(tariffType) {
+    const t = String(tariffType || '').trim();
+    if (t === '2.0') return [1, 2, 3];
+    if (t === '3.0' || t === '6.1') return [1, 2, 3, 4, 5, 6];
+    return [1, 2, 3, 4, 5, 6];
+}
+
 function extractEnergyPeriodItems(text) {
     const raw = String(text || '').replace(/×/g, '*').replace(/x/g, '*');
     const byPeriod = {};
@@ -389,9 +396,11 @@ async function processFiles(files) {
             console.log(`[Result] Datos extraídos:`, auditData);
             invoices.push(auditData);
 
-            // Solo se persiste historial/cloud si cumple la regla de peajes obligatorios
+            // Siempre guardar en historial local (incluidas rechazadas)
+            saveToDatabase([auditData]);
+
+            // Solo sincronizar cloud si cumple la regla de peajes obligatorios
             if (hasMandatoryTolls) {
-                saveToDatabase([auditData]);
                 await cloudSync(auditData);
             }
         } catch (e) {
@@ -740,13 +749,8 @@ function saveToDatabase(invoiceRecords) {
     try {
         dbInvoices = [...invoiceRecords, ...dbInvoices];
         localStorage.setItem('audit_pro_db', JSON.stringify(dbInvoices));
+        renderHistory();
         renderClients();
-
-        if (supabaseClient) {
-            supabaseClient.from('invoices').insert(invoiceRecords).then(({ error }) => {
-                if (error) console.warn('Supabase insert fallido:', error.message);
-            });
-        }
     } catch (err) {
         console.error('Error guardando en database:', err);
     }
@@ -1530,7 +1534,7 @@ function renderCommercializersList() {
             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
                 <div>
                     <h3 style="margin: 0; font-size: 1.1rem;">${c.name}</h3>
-                    <small style="color: #666;">ID: ${c.id}</small>
+                    <small style="color: #666;">ID: ${c.id} | Tarifa: ${c.tariffType || '2.0'}</small>
                 </div>
                 <div style="display: flex; gap: 0.5rem;">
                     <button class="btn primary" onclick="editCommercializer(${idx})" style="font-size: 0.8rem; padding: 0.4rem 0.8rem;">Editar</button>
@@ -1542,7 +1546,7 @@ function renderCommercializersList() {
                 <div>
                     <h4 style="margin: 0 0 0.5rem 0; font-size: 0.9rem; text-decoration: underline;">Precios de Energía (€/kWh)</h4>
                     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; font-size: 0.85rem;">
-                        ${[1, 2, 3, 4, 5, 6].map(p => `
+                        ${getConfiguredPeriodsByTariff(c.tariffType || '2.0').map(p => `
                             <div>P${p}: <strong>${(c.energyPrices[p] || 0).toFixed(6)}</strong></div>
                         `).join('')}
                     </div>
@@ -1550,7 +1554,7 @@ function renderCommercializersList() {
                 <div>
                     <h4 style="margin: 0 0 0.5rem 0; font-size: 0.9rem; text-decoration: underline;">Precios de Potencia (€/kW)</h4>
                     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; font-size: 0.85rem;">
-                        ${[1, 2, 3, 4, 5, 6].map(p => `
+                        ${getConfiguredPeriodsByTariff(c.tariffType || '2.0').map(p => `
                             <div>P${p}: <strong>${(c.powerPrices[p] || 0).toFixed(6)}</strong></div>
                         `).join('')}
                     </div>
@@ -1575,6 +1579,7 @@ function openCommercializerModal(indexToEdit = null) {
         title.innerText = `Editar: ${c.name}`;
         
         document.getElementById('commercializer-name').value = c.name;
+        document.getElementById('commercializer-tariff-type').value = c.tariffType || '2.0';
         [1, 2, 3, 4, 5, 6].forEach(p => {
             document.getElementById(`energy-p${p}`).value = c.energyPrices[p] || '';
             document.getElementById(`power-p${p}`).value = c.powerPrices[p] || '';
@@ -1582,11 +1587,14 @@ function openCommercializerModal(indexToEdit = null) {
     } else {
         title.innerText = 'Nueva Comercializadora';
         document.getElementById('commercializer-name').value = '';
+        document.getElementById('commercializer-tariff-type').value = '2.0';
         [1, 2, 3, 4, 5, 6].forEach(p => {
             document.getElementById(`energy-p${p}`).value = '';
             document.getElementById(`power-p${p}`).value = '';
         });
     }
+
+    updateCommercializerPeriodFields();
 
     modalGuardUntil.commercializer = Date.now() + 250;
     modal.classList.remove('hidden');
@@ -1600,6 +1608,7 @@ function closeCommercializerModal() {
 
 function saveCommercializer() {
     const name = document.getElementById('commercializer-name').value.trim();
+    const tariffType = document.getElementById('commercializer-tariff-type').value || '2.0';
     if (!name) {
         alert('Por favor ingresa un nombre de comercializadora.');
         return;
@@ -1608,6 +1617,10 @@ function saveCommercializer() {
     const energyPrices = {};
     const powerPrices = {};
     [1, 2, 3, 4, 5, 6].forEach(p => {
+        energyPrices[p] = 0;
+        powerPrices[p] = 0;
+    });
+    getConfiguredPeriodsByTariff(tariffType).forEach(p => {
         energyPrices[p] = parseFloat(document.getElementById(`energy-p${p}`).value) || 0;
         powerPrices[p] = parseFloat(document.getElementById(`power-p${p}`).value) || 0;
     });
@@ -1617,6 +1630,7 @@ function saveCommercializer() {
         commercializers[editingCommercializerId] = {
             id: commercializers[editingCommercializerId].id,
             name,
+            tariffType,
             energyPrices,
             powerPrices
         };
@@ -1626,6 +1640,7 @@ function saveCommercializer() {
         const newCommercializer = {
             id: `comm_${Date.now()}`,
             name,
+            tariffType,
             energyPrices,
             powerPrices
         };
@@ -1636,6 +1651,24 @@ function saveCommercializer() {
     saveCommercializersToStorage();
     renderCommercializersList();
     closeCommercializerModal();
+}
+
+function updateCommercializerPeriodFields() {
+    const tariffTypeEl = document.getElementById('commercializer-tariff-type');
+    if (!tariffTypeEl) return;
+    const allowed = new Set(getConfiguredPeriodsByTariff(tariffTypeEl.value));
+    [1, 2, 3, 4, 5, 6].forEach(p => {
+        const energyInput = document.getElementById(`energy-p${p}`);
+        const powerInput = document.getElementById(`power-p${p}`);
+        [energyInput, powerInput].forEach(input => {
+            if (!input) return;
+            const wrapper = input.parentElement;
+            if (!wrapper) return;
+            const visible = allowed.has(p);
+            wrapper.style.display = visible ? 'block' : 'none';
+            if (!visible) input.value = '';
+        });
+    });
 }
 
 function editCommercializer(index) {
@@ -1685,6 +1718,7 @@ window.openDetailModalFromHistory = openDetailModalFromHistory;
 window.openCommercializerModal = openCommercializerModal;
 window.closeCommercializerModal = closeCommercializerModal;
 window.saveCommercializer = saveCommercializer;
+window.updateCommercializerPeriodFields = updateCommercializerPeriodFields;
 window.editCommercializer = editCommercializer;
 window.deleteCommercializer = deleteCommercializer;
 
