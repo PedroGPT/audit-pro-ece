@@ -193,9 +193,16 @@ function sortTariffValue(tariffType) {
     return order[String(tariffType || '')] || 99;
 }
 
-function getConfiguredPeriodsByTariff(tariffType) {
+function getConfiguredEnergyPeriodsByTariff(tariffType) {
     const t = String(tariffType || '').trim();
     if (t === '2.0') return [1, 2, 3];
+    if (t === '3.0' || t === '6.1') return [1, 2, 3, 4, 5, 6];
+    return [1, 2, 3, 4, 5, 6];
+}
+
+function getConfiguredPowerPeriodsByTariff(tariffType) {
+    const t = String(tariffType || '').trim();
+    if (t === '2.0') return [1, 2];
     if (t === '3.0' || t === '6.1') return [1, 2, 3, 4, 5, 6];
     return [1, 2, 3, 4, 5, 6];
 }
@@ -1546,7 +1553,7 @@ function renderCommercializersList() {
                 <div>
                     <h4 style="margin: 0 0 0.5rem 0; font-size: 0.9rem; text-decoration: underline;">Precios de Energía (€/kWh)</h4>
                     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; font-size: 0.85rem;">
-                        ${getConfiguredPeriodsByTariff(c.tariffType || '2.0').map(p => `
+                        ${getConfiguredEnergyPeriodsByTariff(c.tariffType || '2.0').map(p => `
                             <div>P${p}: <strong>${(c.energyPrices[p] || 0).toFixed(6)}</strong></div>
                         `).join('')}
                     </div>
@@ -1554,7 +1561,7 @@ function renderCommercializersList() {
                 <div>
                     <h4 style="margin: 0 0 0.5rem 0; font-size: 0.9rem; text-decoration: underline;">Precios de Potencia (€/kW)</h4>
                     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; font-size: 0.85rem;">
-                        ${getConfiguredPeriodsByTariff(c.tariffType || '2.0').map(p => `
+                        ${getConfiguredPowerPeriodsByTariff(c.tariffType || '2.0').map(p => `
                             <div>P${p}: <strong>${(c.powerPrices[p] || 0).toFixed(6)}</strong></div>
                         `).join('')}
                     </div>
@@ -1620,8 +1627,10 @@ function saveCommercializer() {
         energyPrices[p] = 0;
         powerPrices[p] = 0;
     });
-    getConfiguredPeriodsByTariff(tariffType).forEach(p => {
+    getConfiguredEnergyPeriodsByTariff(tariffType).forEach(p => {
         energyPrices[p] = parseFloat(document.getElementById(`energy-p${p}`).value) || 0;
+    });
+    getConfiguredPowerPeriodsByTariff(tariffType).forEach(p => {
         powerPrices[p] = parseFloat(document.getElementById(`power-p${p}`).value) || 0;
     });
 
@@ -1656,18 +1665,21 @@ function saveCommercializer() {
 function updateCommercializerPeriodFields() {
     const tariffTypeEl = document.getElementById('commercializer-tariff-type');
     if (!tariffTypeEl) return;
-    const allowed = new Set(getConfiguredPeriodsByTariff(tariffTypeEl.value));
+    const allowedEnergy = new Set(getConfiguredEnergyPeriodsByTariff(tariffTypeEl.value));
+    const allowedPower = new Set(getConfiguredPowerPeriodsByTariff(tariffTypeEl.value));
     [1, 2, 3, 4, 5, 6].forEach(p => {
         const energyInput = document.getElementById(`energy-p${p}`);
         const powerInput = document.getElementById(`power-p${p}`);
-        [energyInput, powerInput].forEach(input => {
-            if (!input) return;
-            const wrapper = input.parentElement;
-            if (!wrapper) return;
-            const visible = allowed.has(p);
-            wrapper.style.display = visible ? 'block' : 'none';
-            if (!visible) input.value = '';
-        });
+        if (energyInput && energyInput.parentElement) {
+            const visibleEnergy = allowedEnergy.has(p);
+            energyInput.parentElement.style.display = visibleEnergy ? 'block' : 'none';
+            if (!visibleEnergy) energyInput.value = '';
+        }
+        if (powerInput && powerInput.parentElement) {
+            const visiblePower = allowedPower.has(p);
+            powerInput.parentElement.style.display = visiblePower ? 'block' : 'none';
+            if (!visiblePower) powerInput.value = '';
+        }
     });
 }
 
