@@ -1008,9 +1008,20 @@ function openDetailModalFromInvoices(index) {
 }
 
 function openDetailModalFromHistory(index) {
-    if (!dbInvoices[index]) return;
-    openDetailModal(dbInvoices[index]);
-    renderInvoiceDetail(dbInvoices[index]);
+    if (!dbInvoices[index]) {
+        console.error('[History] Factura no encontrada en índice', index);
+        return;
+    }
+    const inv = dbInvoices[index];
+    const modal = document.getElementById('invoice-detail-modal');
+    const body = document.getElementById('modal-content-body');
+    if (!modal || !body) {
+        console.error('[History] Modal o body no encontrados');
+        return;
+    }
+    body.innerHTML = buildInvoiceDetailTable(inv);
+    modal.classList.remove('hidden');
+    console.log('[History] Abierto detalle para', inv.invoiceNum);
 }
 
 function renderInvoiceDetail(inv) {
@@ -1372,7 +1383,8 @@ function renderCommercializersList() {
 function openCommercializerModal(indexToEdit = null) {
     const modal = document.getElementById('commercializer-modal');
     const title = document.getElementById('commercializer-modal-title');
-    if (!modal || !title) return;
+    if (!modal) { console.error('[Shop] Modal no encontrado'); return; }
+    if (!title) { console.error('[Shop] Title no encontrado'); return; }
 
     editingCommercializerId = indexToEdit !== null ? indexToEdit : null;
     
@@ -1482,3 +1494,16 @@ window.addEventListener('click', (event) => {
         closeCompareSelectorModal();
     }
 });
+
+// Exponer funciones globales para onclick handlers
+window.openDetailModalFromHistory = openDetailModalFromHistory;
+window.openCommercializerModal = openCommercializerModal;
+window.closeCommercializerModal = closeCommercializerModal;
+window.saveCommercializer = saveCommercializer;
+window.editCommercializer = editCommercializer;
+window.deleteCommercializer = deleteCommercializer;
+
+// Inicializar
+console.log('[Init] Cargando comercializadoras...');
+loadCommercializers();
+renderCommercializersList();
