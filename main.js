@@ -38,6 +38,10 @@ let proposalsLog = [];
 let compareBaseInvoice = null;
 let compareCatalog = [];
 
+// Limites operativos para carga masiva de facturas
+const MAX_BATCH_INVOICES = 30;
+const MAX_PDF_SIZE_MB = 15;
+
 // Mapa para mantener los objetos File en memoria para el visor de PDF
 window.pendingPdfFiles = new Map();
 
@@ -467,12 +471,30 @@ function normalizeEnergyAndTolls(inv) {
 // 5. MOTOR DE PROCESAMIENTO DE ARCHIVOS (AUDITORÍA IA CON OPENAI)
 // ========================================================================
 async function processFiles(files) {
+    const selectedFiles = Array.from(files || []).filter(Boolean);
+    if (selectedFiles.length === 0) return;
+
+    const nonPdfCount = selectedFiles.filter(file => !String(file.name || '').toLowerCase().endsWith('.pdf')).length;
+    const oversized = selectedFiles.filter(file => (Number(file.size || 0) / (1024 * 1024)) > MAX_PDF_SIZE_MB);
+    const validPdfFiles = selectedFiles.filter(file =>
+        String(file.name || '').toLowerCase().endsWith('.pdf') &&
+        (Number(file.size || 0) / (1024 * 1024)) <= MAX_PDF_SIZE_MB
+    );
+
+    if (validPdfFiles.length === 0) {
+        alert(`No hay facturas PDF validas para procesar. Tamano maximo por archivo: ${MAX_PDF_SIZE_MB} MB.`);
+        return;
+    }
+
+    const filesToProcess = validPdfFiles.slice(0, MAX_BATCH_INVOICES);
+    const skippedByBatchLimit = Math.max(0, validPdfFiles.length - filesToProcess.length);
+
     const loading = document.getElementById('loading');
     if (loading) loading.classList.remove('hidden');
 
     let rejectedByMissingTolls = 0;
 
-    for (const file of files) {
+    for (const file of filesToProcess) {
         try {
             console.log(`[Auditor] Analizando documento: ${file.name}`);
             window.pendingPdfFiles.set(file.name, file);
@@ -537,6 +559,16 @@ async function processFiles(files) {
 
     if (rejectedByMissingTolls > 0) {
         alert(`Se rechazaron ${rejectedByMissingTolls} factura(s) por no incluir peajes por periodo. Ninguna factura puede pasar sin peajes.`);
+    }
+
+    const skippedBySize = oversized.length;
+    if (nonPdfCount > 0 || skippedBySize > 0 || skippedByBatchLimit > 0) {
+        alert(
+            `Carga masiva finalizada. Procesadas: ${filesToProcess.length}. ` +
+            `Ignoradas no PDF: ${nonPdfCount}. ` +
+            `Ignoradas por tamano (>${MAX_PDF_SIZE_MB} MB): ${skippedBySize}. ` +
+            `Ignoradas por limite de lote (${MAX_BATCH_INVOICES}): ${skippedByBatchLimit}.`
+        );
     }
 
     if (loading) loading.classList.add('hidden');
