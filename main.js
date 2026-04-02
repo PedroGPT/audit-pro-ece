@@ -31,6 +31,8 @@ let dbInvoices = [];
 let currentAudit = null;
 let supabaseClient = null;
 let modalGuardUntil = { detail: 0, commercializer: 0, compareSelector: 0 };
+let clientSupplyRows = [];
+let currentClientSupplyPdfUrl = null;
 
 // Mapa para mantener los objetos File en memoria para el visor de PDF
 window.pendingPdfFiles = new Map();
@@ -153,6 +155,22 @@ function detectComercializadoraFromText(text) {
     if (labelMatch) return labelMatch[1].trim().toUpperCase();
 
     return 'N/D';
+}
+
+async function generatePdfFirstPagePreview(pdf) {
+    try {
+        const page = await pdf.getPage(1);
+        const viewport = page.getViewport({ scale: 0.6 });
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        await page.render({ canvasContext: context, viewport }).promise;
+        return canvas.toDataURL('image/jpeg', 0.72);
+    } catch (err) {
+        console.warn('[Preview] No se pudo generar miniatura de factura:', err);
+        return null;
+    }
 }
 
 function detectTariffTypeFromText(text) {
@@ -381,6 +399,8 @@ async function processFiles(files) {
                 const textContent = await page.getTextContent();
                 fullText += textContent.items.map(item => item.str).join(" ") + "\n";
             }
+
+            const invoicePreview = await generatePdfFirstPagePreview(pdf);
             
             console.log(`[PDF] Texto extraído (${fullText.length} caracteres):`, fullText.substring(0, 200) + "...");
 
@@ -401,6 +421,7 @@ async function processFiles(files) {
             }
 
             console.log(`[Result] Datos extraídos:`, auditData);
+            auditData.invoicePreview = invoicePreview || null;
             invoices.push(auditData);
 
             // Siempre guardar en historial local (incluidas rechazadas)
@@ -787,6 +808,8 @@ function renderClients() {
     const clientsList = document.getElementById('clients-list');
     if (!clientsList) return;
 
+    clientSupplyRows = [];
+
     const filterClientEl = document.getElementById('clients-filter-name');
     const filterSupplyEl = document.getElementById('clients-filter-supply');
     const filterTariffEl = document.getElementById('clients-filter-tariff');
@@ -852,7 +875,8 @@ function renderClients() {
                         address,
                         cups,
                         tariffType,
-                        comercializadora: inv.comercializadora || 'N/D'
+                        comercializadora: inv.comercializadora || 'N/D',
+                        invoice: inv
                     });
                 }
             });
@@ -873,11 +897,15 @@ function renderClients() {
             if (supplies.length === 0) return '';
 
             const rows = supplies.map(s => `
+                ${(() => { clientSupplyRows.push({ supply: s, invoice: s.invoice }); return ''; })()}
                 <tr>
                     <td>${s.address}</td>
                     <td>${s.cups}</td>
                     <td>${s.tariffType}</td>
                     <td>${s.comercializadora}</td>
+                    <td>
+                        <button class="btn primary btn-sm" onclick="openClientSupplyInvoice(${clientSupplyRows.length - 1})">Ver factura</button>
+                    </td>
                 </tr>
             `).join('');
 
@@ -892,10 +920,11 @@ function renderClients() {
                                     <th>CUPS</th>
                                     <th>Tarifa</th>
                                     <th>Comercializadora</th>
+                                    <th>Factura</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                ${rows || '<tr><td colspan="4">Sin suministros</td></tr>'}
+                                ${rows || '<tr><td colspan="5">Sin suministros</td></tr>'}
                             </tbody>
                         </table>
                     </div>
@@ -1481,6 +1510,60 @@ function clearCurrentInvoices() {
     }
 }
 
+function openClientSupplyInvoice(rowIndex) {
+    const row = clientSupplyRows[rowIndex];
+    if (!row || !row.invoice) {
+        alert('No hay factura asociada disponible para este suministro.');
+        return;
+    }
+
+    const modal = document.getElementById('client-supply-invoice-modal');
+    const body = document.getElementById('client-supply-invoice-modal-body');
+    if (!modal || !body) return;
+
+    const inv = row.invoice;
+    const file = window.pendingPdfFiles.get(inv.fileName);
+    let viewerHtml = '';
+
+    if (currentClientSupplyPdfUrl) {
+        URL.revokeObjectURL(currentClientSupplyPdfUrl);
+        currentClientSupplyPdfUrl = null;
+    }
+
+    if (file) {
+        currentClientSupplyPdfUrl = URL.createObjectURL(file);
+        viewerHtml = `<iframe src="${currentClientSupplyPdfUrl}" style="width:100%; height:560px; border:1px solid #e2e8f0; border-radius:8px;" title="Factura PDF"></iframe>`;
+    } else if (inv.invoicePreview) {
+        viewerHtml = `<img src="${inv.invoicePreview}" alt="Preview factura" style="width:100%; max-width:900px; border:1px solid #e2e8f0; border-radius:8px; display:block;">`;
+    } else {
+        viewerHtml = '<div class="card" style="padding:1rem;">No hay PDF/preview disponible para esta factura en este navegador.</div>';
+    }
+
+    body.innerHTML = `
+        <div style="display:grid; grid-template-columns: 1fr; gap: 1rem;">
+            <div class="card" style="padding:0.85rem;">
+                <strong>Factura:</strong> ${inv.invoiceNum || 'S/N'} | 
+                <strong>Cliente:</strong> ${inv.clientName || 'N/D'} | 
+                <strong>Tarifa:</strong> ${inv.tariffType || 'N/D'} | 
+                <strong>CUPS:</strong> ${inv.cups || 'N/D'}
+                <div style="margin-top:0.35rem;"><strong>Direccion:</strong> ${inv.supplyAddress || 'N/D'}</div>
+            </div>
+            <div>${viewerHtml}</div>
+        </div>
+    `;
+
+    modal.classList.remove('hidden');
+}
+
+function closeClientSupplyInvoiceModal() {
+    const modal = document.getElementById('client-supply-invoice-modal');
+    if (modal) modal.classList.add('hidden');
+    if (currentClientSupplyPdfUrl) {
+        URL.revokeObjectURL(currentClientSupplyPdfUrl);
+        currentClientSupplyPdfUrl = null;
+    }
+}
+
 // ========================================================================
 // 10. INICIALIZACIÓN Y EVENTOS
 // ========================================================================
@@ -1725,8 +1808,19 @@ window.addEventListener('click', (event) => {
     }
 });
 
+window.addEventListener('click', (event) => {
+    const modal = document.getElementById('client-supply-invoice-modal');
+    if (!modal || modal.classList.contains('hidden')) return;
+    const content = modal.querySelector('.modal-content');
+    if (content && !content.contains(event.target)) {
+        closeClientSupplyInvoiceModal();
+    }
+});
+
 // Exponer funciones globales para onclick handlers
 window.openDetailModalFromHistory = openDetailModalFromHistory;
+window.openClientSupplyInvoice = openClientSupplyInvoice;
+window.closeClientSupplyInvoiceModal = closeClientSupplyInvoiceModal;
 window.openCommercializerModal = openCommercializerModal;
 window.closeCommercializerModal = closeCommercializerModal;
 window.saveCommercializer = saveCommercializer;
