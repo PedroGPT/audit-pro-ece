@@ -183,6 +183,21 @@
         </div>
     </div>
 
+    <div id="compare-selector-modal" class="modal hidden" role="dialog" aria-modal="true">
+        <div class="modal-content" style="max-width: 900px; max-height: 80vh; overflow-y: auto;">
+            <button class="modal-close" onclick="closeCompareSelectorModal()">×</button>
+            <h2>Seleccionar Comercializadoras para Comparar</h2>
+            <div style="margin-top: 1.5rem;">
+                <div id="compare-selector-list" style="margin-bottom: 1.5rem;"></div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button class="btn secondary" onclick="closeCompareSelectorModal()">Cancelar</button>
+                    <button class="btn primary" onclick="doSingleComparison()">Comparativa Individual</button>
+                    <button class="btn primary" onclick="doMultipleComparison()" style="background-color: #0891b2;">Comparativa Múltiple</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="main.js?v=SUPER_RESET_2026"></script>
 </body>
 

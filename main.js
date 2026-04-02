@@ -1039,41 +1039,193 @@ window.addEventListener('click', (event) => {
     }
 });
 
+// Comparacion state
+let compareCurrentInvoiceIndex = null;
+let compareSelectedCommercializers = [];
+
 function openCompareView(index) {
     const inv = invoices[index];
+    if (!inv) return;
+
+    if (commercializers.length === 0) {
+        alert('No hay comercializadoras configuradas. Por favor crea una en la pestaña "Comercializadoras".');
+        return;
+    }
+
+    compareCurrentInvoiceIndex = index;
+    compareSelectedCommercializers = [];
+    renderCompareSelectorList();
+    document.getElementById('compare-selector-modal').classList.remove('hidden');
+}
+
+function renderCompareSelectorList() {
+    const list = document.getElementById('compare-selector-list');
+    if (!list) return;
+
+    const html = commercializers.map((c, idx) => {
+        const pricesPreview = [1, 2, 3, 4, 5, 6].map(p => `P${p}: ${(c.energyPrices[p] || 0).toFixed(4)}`).join(' | ');
+        return `
+            <div style="display: flex; align-items: center; gap: 1rem; padding: 0.75rem; border: 1px solid #e5e7eb; border-radius: 4px; margin-bottom: 0.5rem;">
+                <input type="checkbox" id="compare-check-${idx}" value="${idx}" style="width: 18px; height: 18px; cursor: pointer;">
+                <div style="flex: 1;">
+                    <strong>${c.name}</strong>
+                    <div style="font-size: 0.85rem; color: #666; margin-top: 0.25rem;">€/kWh: ${pricesPreview}</div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    list.innerHTML = html || '<p style="color: #999;">No hay comercializadoras disponibles</p>';
+}
+
+function doSingleComparison() {
+    const selected = [];
+    commercializers.forEach((c, idx) => {
+        const checkbox = document.getElementById(`compare-check-${idx}`);
+        if (checkbox && checkbox.checked) selected.push(idx);
+    });
+
+    if (selected.length === 0) {
+        alert('Por favor selecciona al menos una comercializadora.');
+        return;
+    }
+
+    if (selected.length > 1) {
+        alert('Para comparativa individual, selecciona solo una comercializadora.');
+        return;
+    }
+
+    closeCompareSelectorModal();
+    renderSingleComparison(compareCurrentInvoiceIndex, selected[0]);
+}
+
+function doMultipleComparison() {
+    const selected = [];
+    commercializers.forEach((c, idx) => {
+        const checkbox = document.getElementById(`compare-check-${idx}`);
+        if (checkbox && checkbox.checked) selected.push(idx);
+    });
+
+    if (selected.length === 0) {
+        alert('Por favor selecciona al menos una comercializadora.');
+        return;
+    }
+
+    closeCompareSelectorModal();
+    renderMultipleComparison(compareCurrentInvoiceIndex, selected);
+}
+
+function renderSingleComparison(invoiceIdx, commercializerIdx) {
+    const inv = invoices[invoiceIdx];
+    const comm = commercializers[commercializerIdx];
+    if (!inv || !comm) return;
+
+    const compareSection = document.getElementById('comparison-results');
+    if (!compareSection) return;
+
+    const currentEnergy = inv.energyPeriodItems || [];
+    const periodRows = currentEnergy.map(item => {
+        const period = item.period;
+        const currentPrice = Number(item.unitPriceKwh || 0);
+        const commPrice = Number(comm.energyPrices[period] || 0);
+        const diff = commPrice - currentPrice;
+        const diffSign = diff > 0 ? '+' : '';
+        const diffColor = diff > 0 ? '#dc2626' : diff < 0 ? '#059669' : '#666';
+        return `<tr>
+            <td>P${period}</td>
+            <td>${item.kwh.toFixed(2)} kWh</td>
+            <td>${currentPrice.toFixed(6)} €/kWh</td>
+            <td>${commPrice.toFixed(6)} €/kWh</td>
+            <td style="color: ${diffColor}; font-weight: 600;">${diffSign}${diff.toFixed(6)} €/kWh</td>
+        </tr>`;
+    }).join('');
+
+    const currentCost = Number(inv.energyCost || 0);
+    const commCost = currentEnergy.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(comm.energyPrices[item.period] || 0)), 0);
+    const totalDiff = commCost - currentCost;
+    const totalDiffSign = totalDiff > 0 ? '+' : '';
+    const totalDiffColor = totalDiff > 0 ? '#dc2626' : totalDiff < 0 ? '#059669' : '#666';
+
+    const html = `
+        <h3>Comparativa Individual: ${inv.invoiceNum || 'S/N'}</h3>
+        <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Factura:</strong> ${inv.comercializadora || 'N/D'} | <strong>Comparar con:</strong> ${comm.name}</p>
+        <p><strong>Análisis de energía (€/kWh por periodo)</strong></p>
+        <table class="modal-table">
+            <thead><tr><th>Periodo</th><th>Consumo</th><th>Precio factua</th><th>Precio ${comm.name}</th><th>Diferencia</th></tr></thead>
+            <tbody>
+                ${periodRows || '<tr><td colspan="5">No hay periodos</td></tr>'}
+                <tr class="mirror-row-total"><td colspan="2">Coste Total Energía</td><td>${formatCurrency(currentCost)}</td><td>${formatCurrency(commCost)}</td><td style="color: ${totalDiffColor}; font-weight: 600;">${totalDiffSign}${formatCurrency(totalDiff)}</td></tr>
+            </tbody>
+        </table>
+    `;
+
+    compareSection.innerHTML = html;
+    switchView('compare-view');
+}
+
+function renderMultipleComparison(invoiceIdx, commercializerIndices) {
+    const inv = invoices[invoiceIdx];
     if (!inv) return;
 
     const compareSection = document.getElementById('comparison-results');
     if (!compareSection) return;
 
-    const periodRows = (inv.energyPeriodItems || []).map(item => {
-        const idx = item.period - 1;
-        const fenie = MARKET_BENCHMARK.fenie.energy[idx] || 0;
-        const repsol = MARKET_BENCHMARK.repsol.energy[idx] || 0;
+    const currentEnergy = inv.energyPeriodItems || [];
+
+    // Construir tabla con columnas para cada comercializadora
+    const comms = commercializerIndices.map(idx => commercializers[idx]);
+    const headerCells = comms.map(c => `<th>${c.name}</th>`).join('');
+    const periodRows = currentEnergy.map(item => {
+        const period = item.period;
+        const currentPrice = Number(item.unitPriceKwh || 0);
+        const commCells = comms.map(c => {
+            const commPrice = Number(c.energyPrices[period] || 0);
+            const diff = commPrice - currentPrice;
+            const diffSign = diff > 0 ? '+' : '';
+            const diffColor = diff > 0 ? '#dc2626' : diff < 0 ? '#059669' : '#999';
+            return `<td style="color: ${diffColor};"><strong>${commPrice.toFixed(6)}</strong><br><small>${diffSign}${diff.toFixed(6)}</small></td>`;
+        }).join('');
         return `<tr>
-            <td>P${item.period}</td>
+            <td>P${period}</td>
             <td>${item.kwh.toFixed(2)} kWh</td>
-            <td>${item.unitPriceKwh.toFixed(6)} €/kWh</td>
-            <td>${fenie.toFixed(6)} €/kWh</td>
-            <td>${repsol.toFixed(6)} €/kWh</td>
+            <td><strong style="font-size: 1.05rem;">${currentPrice.toFixed(6)}</strong></td>
+            ${commCells}
         </tr>`;
     }).join('');
 
-    const avgCurrent = (inv.energyUnitPriceAvg || (inv.consumption > 0 ? (parseFloat(inv.energyCost || 0) / inv.consumption) : 0));
-    const avgFenie = MARKET_BENCHMARK.fenie.energy.reduce((a, b) => a + b, 0) / MARKET_BENCHMARK.fenie.energy.length;
-    const avgRepsol = MARKET_BENCHMARK.repsol.energy.reduce((a, b) => a + b, 0) / MARKET_BENCHMARK.repsol.energy.length;
+    // Fila de totales
+    const currentCost = Number(inv.energyCost || 0);
+    const commTotalCells = comms.map(c => {
+        const commCost = currentEnergy.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(c.energyPrices[item.period] || 0)), 0);
+        const totalDiff = commCost - currentCost;
+        const totalDiffSign = totalDiff > 0 ? '+' : '';
+        const totalDiffColor = totalDiff > 0 ? '#dc2626' : totalDiff < 0 ? '#059669' : '#999';
+        return `<td style="font-weight: 700; color: ${totalDiffColor}; background: #f0fdf4;">${formatCurrency(commCost)}<br><small>${totalDiffSign}${formatCurrency(totalDiff)}</small></td>`;
+    }).join('');
 
     const html = `
-        <h3>Comparativa para factura ${inv.invoiceNum || 'S/N'}</h3>
-        <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Comercializadora:</strong> ${inv.comercializadora || 'N/D'}</p>
+        <h3>Comparativa Múltiple: ${inv.invoiceNum || 'S/N'}</h3>
+        <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Consumo:</strong> ${inv.consumption?.toFixed(2) || 0} kWh</p>
         <p><strong>Comparativa de precios de energía</strong> (€/kWh por periodo)</p>
-        <table class="modal-table">
-            <thead><tr><th>Periodo</th><th>Consumo</th><th>Precio actual</th><th>Fenie</th><th>Repsol</th></tr></thead>
-            <tbody>
-                ${periodRows || '<tr><td colspan="5">No hay periodos extraídos todavía</td></tr>'}
-                <tr class="mirror-row-total"><td>Promedio</td><td>-</td><td>${avgCurrent.toFixed(6)} €/kWh</td><td>${avgFenie.toFixed(6)} €/kWh</td><td>${avgRepsol.toFixed(6)} €/kWh</td></tr>
-            </tbody>
-        </table>
+        <div style="overflow-x: auto;">
+            <table class="modal-table">
+                <thead>
+                    <tr>
+                        <th>Periodo</th>
+                        <th>Consumo</th>
+                        <th>Factura Actual</th>
+                        ${headerCells}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${periodRows}
+                    <tr class="mirror-row-total">
+                        <td colspan="3" style="text-align: right;">Coste Total</td>
+                        ${commTotalCells}
+                    </tr>
+                </tbody>
+            </table>
+        </div>
     `;
 
     compareSection.innerHTML = html;
@@ -1312,5 +1464,21 @@ window.addEventListener('click', (event) => {
     const content = modal.querySelector('.modal-content');
     if (content && !content.contains(event.target)) {
         closeCommercializerModal();
+    }
+});
+
+function closeCompareSelectorModal() {
+    const modal = document.getElementById('compare-selector-modal');
+    if (modal) modal.classList.add('hidden');
+    compareCurrentInvoiceIndex = null;
+    compareSelectedCommercializers = [];
+}
+
+window.addEventListener('click', (event) => {
+    const modal = document.getElementById('compare-selector-modal');
+    if (!modal || modal.classList.contains('hidden')) return;
+    const content = modal.querySelector('.modal-content');
+    if (content && !content.contains(event.target)) {
+        closeCompareSelectorModal();
     }
 });
