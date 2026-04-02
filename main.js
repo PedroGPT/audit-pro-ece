@@ -30,7 +30,7 @@ let invoices = [];
 let dbInvoices = []; 
 let currentAudit = null;
 let supabaseClient = null;
-let modalGuardUntil = { detail: 0, commercializer: 0, compareSelector: 0, clientSupply: 0, compareTransparency: 0 };
+let modalGuardUntil = { detail: 0, commercializer: 0, compareSelector: 0, clientSupply: 0, compareTransparency: 0, clientAudit: 0 };
 let clientSupplyRows = [];
 let currentClientSupplyPdfUrl = null;
 let supplyProposals = {};
@@ -220,6 +220,24 @@ async function renderPdfFileAllPages(file, container) {
     }
 
     container.innerHTML = `<div style="display:flex; flex-direction:column; align-items:center;">${pagesHtml.join('')}</div>`;
+}
+
+async function renderPdfFileFirstPage(file, container) {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 1.25 });
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    await page.render({ canvasContext: context, viewport }).promise;
+    container.innerHTML = `
+        <div style="display:flex; flex-direction:column; align-items:center;">
+            <div style="font-size:0.85rem; color:#64748b; margin-bottom:0.25rem;">Pagina 1/${pdf.numPages}</div>
+            ${canvas.outerHTML}
+        </div>
+    `;
 }
 
 function detectTariffTypeFromText(text) {
@@ -1028,6 +1046,9 @@ function renderClients() {
 
             const rows = supplies.map(s => {
                 const rowIndex = clientSupplyRows.push({ supply: s, invoice: s.invoice }) - 1;
+                const audit = computeInvoiceAutoAudit(s.invoice);
+                const badgeBg = audit.isOk ? '#ecfdf5' : '#fff7ed';
+                const badgeColor = audit.isOk ? '#166534' : '#9a3412';
                 return `
                     <tr>
                         <td>${s.address}</td>
@@ -1038,7 +1059,13 @@ function renderClients() {
                             ${s.proposedCommercializer ? `<div style="font-size:0.8rem; color:#059669;">Propuesta: ${s.proposedCommercializer}</div>` : ''}
                         </td>
                         <td>
+                            <span style="display:inline-block; padding:0.2rem 0.5rem; border-radius:999px; font-size:0.78rem; font-weight:700; background:${badgeBg}; color:${badgeColor};">
+                                ${audit.isOk ? 'CUADRADA' : `REVISAR (${audit.failedCount})`}
+                            </span>
+                        </td>
+                        <td>
                             <button class="btn primary btn-sm" onclick="openClientSupplyInvoice(${rowIndex})">Ver factura</button>
+                            <button class="btn secondary btn-sm" onclick="openClientSupplyAuditModal(${rowIndex})" style="margin-left:0.4rem;">Audit</button>
                             <button class="btn secondary btn-sm" onclick="openCompareFromClientSupply(${rowIndex})" style="margin-left:0.4rem;">Comparar</button>
                         </td>
                     </tr>
@@ -1056,11 +1083,12 @@ function renderClients() {
                                     <th>CUPS</th>
                                     <th>Tarifa</th>
                                     <th>Comercializadora</th>
-                                    <th>Factura</th>
+                                    <th>Cuadre</th>
+                                    <th>Acciones</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                ${rows || '<tr><td colspan="5">Sin suministros</td></tr>'}
+                                ${rows || '<tr><td colspan="6">Sin suministros</td></tr>'}
                             </tbody>
                         </table>
                     </div>
@@ -1186,6 +1214,168 @@ function renderHistory() {
 // ========================================================================
 function formatCurrency(a) { 
     return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(a || 0); 
+}
+
+function computeInvoiceAutoAudit(inv) {
+    const tolerance = 0.5;
+    const allowedPeriods = getActivePeriodsByTariff(inv.tariffType, inv.energyPeriodItems || []);
+    const energyItems = (inv.energyPeriodItems || []).filter(item => allowedPeriods.includes(Number(item.period)));
+
+    const energyCommodityDetail = energyItems.reduce((sum, e) => {
+        return sum + (Number(e.kwh || 0) * Number(e.unitPriceKwh || 0));
+    }, 0);
+
+    const tollsDetail = energyItems.reduce((sum, e) => {
+        const toll = (inv.tollPeriodItems || []).find(t => Number(t.period) === Number(e.period));
+        return sum + (Number(e.kwh || 0) * Number(toll?.unitPriceKwh || 0));
+    }, 0);
+
+    const energyTotalDetail = energyCommodityDetail + tollsDetail;
+
+    const billingDays = inferInvoiceBillingDays(inv);
+    const powerDetail = (inv.powerPeriodItems || [])
+        .filter(item => Number(item.kw || 0) > 0)
+        .reduce((sum, p) => {
+            const days = Number(p.days || 0) > 0 ? Number(p.days || 0) : billingDays;
+            return sum + (Number(p.kw || 0) * Number(p.unitPriceKw || 0) * Number(days || 0));
+        }, 0);
+
+    const others = Number(inv.othersCost || 0);
+    const alquiler = Number(inv.alquiler || 0);
+    const reactive = Number(inv.reactiveCost || 0);
+
+    const energyRef = Number(inv.energyCost || 0);
+    const powerRef = Number(inv.powerCost || 0);
+    const subtotalRef = Number(inv.breakdown?.subtotalBase || 0) || (energyRef + powerRef + others + alquiler + reactive);
+    const ieeRef = Number(inv.breakdown?.iee || inv.electricityTax || 0);
+    const taxRef = Number(inv.taxValue || inv.breakdown?.taxAmount || 0);
+    const totalRef = Number(inv.totalCalculated || 0);
+
+    const subtotalDetail = energyTotalDetail + powerDetail + others + alquiler + reactive;
+    const totalDetail = subtotalDetail + ieeRef + taxRef;
+
+    const checks = [
+        {
+            key: 'energy',
+            label: 'Energia total (energia + peajes/cargos)',
+            expected: energyRef,
+            actual: energyTotalDetail
+        },
+        {
+            key: 'power',
+            label: 'Potencia total',
+            expected: powerRef,
+            actual: powerDetail
+        },
+        {
+            key: 'subtotal',
+            label: 'Subtotal base',
+            expected: subtotalRef,
+            actual: subtotalDetail
+        },
+        {
+            key: 'total',
+            label: 'Total factura',
+            expected: totalRef,
+            actual: totalDetail
+        }
+    ].map(item => {
+        const diff = Math.abs(item.expected - item.actual);
+        return { ...item, diff, ok: diff <= tolerance };
+    });
+
+    const failed = checks.filter(c => !c.ok);
+    return {
+        tolerance,
+        checks,
+        failedCount: failed.length,
+        isOk: failed.length === 0,
+        breakdown: {
+            energyCommodityDetail,
+            tollsDetail,
+            energyTotalDetail,
+            powerDetail,
+            others,
+            alquiler,
+            reactive,
+            ieeRef,
+            taxRef,
+            subtotalDetail,
+            totalDetail,
+            energyRef,
+            powerRef,
+            subtotalRef,
+            totalRef
+        }
+    };
+}
+
+function openClientSupplyAuditModal(rowIndex) {
+    const row = clientSupplyRows[rowIndex];
+    if (!row || !row.invoice) return;
+
+    const inv = row.invoice;
+    const audit = computeInvoiceAutoAudit(inv);
+    const modal = document.getElementById('client-supply-audit-modal');
+    const body = document.getElementById('client-supply-audit-modal-body');
+    if (!modal || !body) return;
+
+    const checkRows = audit.checks.map(c => `
+        <tr>
+            <td>${c.label}</td>
+            <td>${formatCurrency(c.expected)}</td>
+            <td>${formatCurrency(c.actual)}</td>
+            <td style="font-weight:700; color:${c.ok ? '#059669' : '#dc2626'};">${formatCurrency(c.diff)}</td>
+            <td style="font-weight:700; color:${c.ok ? '#059669' : '#dc2626'};">${c.ok ? 'OK' : 'REVISAR'}</td>
+        </tr>
+    `).join('');
+
+    body.innerHTML = `
+        <div class="card" style="padding:0.85rem; margin-bottom:0.75rem; background:${audit.isOk ? '#ecfdf5' : '#fff7ed'}; border:1px solid ${audit.isOk ? '#bbf7d0' : '#fed7aa'};">
+            <div><strong>Resultado de cuadre:</strong> ${audit.isOk ? 'CUADRADA' : 'REVISAR'}</div>
+            <div><strong>Factura:</strong> ${inv.invoiceNum || 'S/N'} | <strong>CUPS:</strong> ${inv.cups || 'N/D'} | <strong>Tarifa:</strong> ${inv.tariffType || 'N/D'}</div>
+            <div style="margin-top:0.35rem; color:#475569;">Tolerancia aplicada: ${formatCurrency(audit.tolerance)}</div>
+        </div>
+
+        <div class="card" style="padding:0.85rem; margin-bottom:0.75rem;">
+            <h3 style="margin-bottom:0.5rem;">Comprobaciones automaticas (detalle vs factura)</h3>
+            <div style="overflow-x:auto;">
+                <table class="modal-table">
+                    <thead>
+                        <tr><th>Chequeo</th><th>Factura</th><th>Detalle calculado</th><th>Diferencia</th><th>Estado</th></tr>
+                    </thead>
+                    <tbody>${checkRows}</tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card" style="padding:0.85rem;">
+            <h3 style="margin-bottom:0.5rem;">Desglose usado en el calculo del detalle</h3>
+            <div style="overflow-x:auto;">
+                <table class="modal-table">
+                    <thead><tr><th>Concepto</th><th>Importe</th></tr></thead>
+                    <tbody>
+                        <tr><td>Energia comercializada (detalle)</td><td>${formatCurrency(audit.breakdown.energyCommodityDetail)}</td></tr>
+                        <tr><td>Peajes/cargos energia (detalle)</td><td>${formatCurrency(audit.breakdown.tollsDetail)}</td></tr>
+                        <tr><td>Energia total detalle</td><td>${formatCurrency(audit.breakdown.energyTotalDetail)}</td></tr>
+                        <tr><td>Potencia total detalle</td><td>${formatCurrency(audit.breakdown.powerDetail)}</td></tr>
+                        <tr><td>Otros + Alquiler + Reactiva</td><td>${formatCurrency(audit.breakdown.others + audit.breakdown.alquiler + audit.breakdown.reactive)}</td></tr>
+                        <tr><td>IEE (factura)</td><td>${formatCurrency(audit.breakdown.ieeRef)}</td></tr>
+                        <tr><td>${inv.taxName || 'Impuesto'} (factura)</td><td>${formatCurrency(audit.breakdown.taxRef)}</td></tr>
+                        <tr style="font-weight:700; background:#eef2ff;"><td>Total detalle calculado</td><td>${formatCurrency(audit.breakdown.totalDetail)}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+
+    modalGuardUntil.clientAudit = Date.now() + 250;
+    modal.classList.remove('hidden');
+}
+
+function closeClientSupplyAuditModal() {
+    const modal = document.getElementById('client-supply-audit-modal');
+    if (modal) modal.classList.add('hidden');
 }
 
 function buildInvoiceDetailTable(inv) {
@@ -2577,9 +2767,7 @@ function openClientSupplyInvoice(rowIndex) {
     const file = window.pendingPdfFiles.get(inv.fileName);
     let viewerHtml = '';
 
-    if (file) {
-        viewerHtml = '<div id="client-pdf-pages" class="card" style="padding:0.75rem; min-height: 280px;">Cargando PDF completo...</div>';
-    } else if (Array.isArray(inv.invoicePreviewPages) && inv.invoicePreviewPages.length > 0) {
+    if (Array.isArray(inv.invoicePreviewPages) && inv.invoicePreviewPages.length > 0) {
         const pagesHtml = inv.invoicePreviewPages.map((img, idx) => `
             <div style="margin-bottom: 1rem;">
                 <div style="font-size:0.85rem; color:#64748b; margin-bottom:0.25rem;">Pagina ${idx + 1}</div>
@@ -2591,7 +2779,12 @@ function openClientSupplyInvoice(rowIndex) {
         const note = rendered < total
             ? `<div class="card" style="padding:0.75rem; margin-bottom:0.75rem;">Mostrando ${rendered} de ${total} paginas en previsualizacion.</div>`
             : '';
-        viewerHtml = `${note}${pagesHtml}`;
+        const fullPdfAction = file
+            ? `<div class="card" style="padding:0.75rem; margin-bottom:0.75rem;"><button class="btn secondary" onclick="openClientSupplyPdfOriginal(${rowIndex})">Abrir PDF original completo</button></div>`
+            : '';
+        viewerHtml = `${fullPdfAction}${note}${pagesHtml}`;
+    } else if (file) {
+        viewerHtml = '<div id="client-pdf-pages" class="card" style="padding:0.75rem; min-height: 280px;">Cargando vista previa del PDF...</div>';
     } else if (inv.invoicePreview) {
         viewerHtml = `<img src="${inv.invoicePreview}" alt="Preview factura" style="width:100%; max-width:980px; border:1px solid #e2e8f0; border-radius:8px; display:block;">`;
     } else {
@@ -2614,15 +2807,27 @@ function openClientSupplyInvoice(rowIndex) {
     modalGuardUntil.clientSupply = Date.now() + 250;
     modal.classList.remove('hidden');
 
-    if (file) {
+    if (file && (!Array.isArray(inv.invoicePreviewPages) || inv.invoicePreviewPages.length === 0)) {
         const pagesContainer = document.getElementById('client-pdf-pages');
         if (pagesContainer) {
-            renderPdfFileAllPages(file, pagesContainer).catch(err => {
-                console.error('[Clients] Error renderizando PDF completo:', err);
+            renderPdfFileFirstPage(file, pagesContainer).catch(err => {
+                console.error('[Clients] Error renderizando vista previa PDF:', err);
                 pagesContainer.innerHTML = '<div class="card" style="padding:1rem;">No se pudo renderizar el PDF completo.</div>';
             });
         }
     }
+}
+
+function openClientSupplyPdfOriginal(rowIndex) {
+    const row = clientSupplyRows[rowIndex];
+    const inv = row?.invoice;
+    const file = inv ? window.pendingPdfFiles.get(inv.fileName) : null;
+    if (!file) {
+        alert('No se encontro el PDF original en memoria para esta sesion.');
+        return;
+    }
+    const url = URL.createObjectURL(file);
+    window.open(url, '_blank');
 }
 
 function closeClientSupplyInvoiceModal() {
@@ -2897,9 +3102,22 @@ window.addEventListener('click', (event) => {
     }
 });
 
+window.addEventListener('click', (event) => {
+    const modal = document.getElementById('client-supply-audit-modal');
+    if (!modal || modal.classList.contains('hidden')) return;
+    if (Date.now() < modalGuardUntil.clientAudit) return;
+    const content = modal.querySelector('.modal-content');
+    if (content && !content.contains(event.target)) {
+        closeClientSupplyAuditModal();
+    }
+});
+
 // Exponer funciones globales para onclick handlers
 window.openDetailModalFromHistory = openDetailModalFromHistory;
 window.openClientSupplyInvoice = openClientSupplyInvoice;
+window.openClientSupplyPdfOriginal = openClientSupplyPdfOriginal;
+window.openClientSupplyAuditModal = openClientSupplyAuditModal;
+window.closeClientSupplyAuditModal = closeClientSupplyAuditModal;
 window.closeClientSupplyInvoiceModal = closeClientSupplyInvoiceModal;
 window.openCompareFromClientSupply = openCompareFromClientSupply;
 window.startCompareFromTab = startCompareFromTab;
