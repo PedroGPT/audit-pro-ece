@@ -41,9 +41,134 @@ let compareCatalog = [];
 // Limites operativos para carga masiva de facturas
 const MAX_BATCH_INVOICES = 30;
 const MAX_PDF_SIZE_MB = 15;
+const INVOICE_FILES_DB_NAME = 'audit_pro_invoice_files';
+const INVOICE_FILES_STORE_NAME = 'files';
 
 // Mapa para mantener los objetos File en memoria para el visor de PDF
 window.pendingPdfFiles = new Map();
+
+let invoiceFilesDbPromise = null;
+
+function getInvoiceStorageKey(inv = {}) {
+    return [
+        String(inv.invoiceNum || 'S/N').trim(),
+        String(inv.fileName || '').trim(),
+        String(inv.period || '').trim(),
+        String(inv.cups || '').trim()
+    ].join('|');
+}
+
+function openInvoiceFilesDb() {
+    if (!window.indexedDB) return Promise.resolve(null);
+    if (!invoiceFilesDbPromise) {
+        invoiceFilesDbPromise = new Promise((resolve, reject) => {
+            const request = window.indexedDB.open(INVOICE_FILES_DB_NAME, 1);
+            request.onupgradeneeded = () => {
+                const db = request.result;
+                if (!db.objectStoreNames.contains(INVOICE_FILES_STORE_NAME)) {
+                    db.createObjectStore(INVOICE_FILES_STORE_NAME, { keyPath: 'id' });
+                }
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        }).catch(err => {
+            console.warn('[PDFStore] No se pudo abrir IndexedDB:', err);
+            invoiceFilesDbPromise = null;
+            return null;
+        });
+    }
+    return invoiceFilesDbPromise;
+}
+
+async function saveInvoicePdfToStore(inv, file) {
+    const db = await openInvoiceFilesDb();
+    const storageKey = getInvoiceStorageKey(inv);
+    if (!db || !storageKey || !file) return;
+
+    await new Promise((resolve, reject) => {
+        const tx = db.transaction(INVOICE_FILES_STORE_NAME, 'readwrite');
+        tx.objectStore(INVOICE_FILES_STORE_NAME).put({
+            id: storageKey,
+            fileName: String(file.name || inv.fileName || 'factura.pdf'),
+            type: String(file.type || 'application/pdf'),
+            blob: file
+        });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+    }).catch(err => {
+        console.warn('[PDFStore] No se pudo guardar PDF en IndexedDB:', err);
+    });
+}
+
+async function loadInvoicePdfFromStore(inv) {
+    const db = await openInvoiceFilesDb();
+    const storageKey = getInvoiceStorageKey(inv);
+    if (!db || !storageKey) return null;
+
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(INVOICE_FILES_STORE_NAME, 'readonly');
+        const request = tx.objectStore(INVOICE_FILES_STORE_NAME).get(storageKey);
+        request.onsuccess = () => {
+            const record = request.result;
+            if (!record?.blob) {
+                resolve(null);
+                return;
+            }
+            const file = record.blob instanceof File
+                ? record.blob
+                : new File([record.blob], record.fileName || inv.fileName || 'factura.pdf', { type: record.type || 'application/pdf' });
+            resolve(file);
+        };
+        request.onerror = () => reject(request.error);
+    }).catch(err => {
+        console.warn('[PDFStore] No se pudo recuperar PDF de IndexedDB:', err);
+        return null;
+    });
+}
+
+async function deleteInvoicePdfFromStore(inv) {
+    const db = await openInvoiceFilesDb();
+    const storageKey = getInvoiceStorageKey(inv);
+    if (!db || !storageKey) return;
+
+    await new Promise((resolve, reject) => {
+        const tx = db.transaction(INVOICE_FILES_STORE_NAME, 'readwrite');
+        tx.objectStore(INVOICE_FILES_STORE_NAME).delete(storageKey);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+    }).catch(err => {
+        console.warn('[PDFStore] No se pudo eliminar PDF de IndexedDB:', err);
+    });
+}
+
+async function clearInvoicePdfStore() {
+    const db = await openInvoiceFilesDb();
+    if (!db) return;
+
+    await new Promise((resolve, reject) => {
+        const tx = db.transaction(INVOICE_FILES_STORE_NAME, 'readwrite');
+        tx.objectStore(INVOICE_FILES_STORE_NAME).clear();
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+    }).catch(err => {
+        console.warn('[PDFStore] No se pudo vaciar IndexedDB:', err);
+    });
+}
+
+async function getInvoicePdfFile(inv) {
+    if (!inv) return null;
+    const inMemory = window.pendingPdfFiles.get(inv.fileName);
+    if (inMemory) return inMemory;
+
+    const storedFile = await loadInvoicePdfFromStore(inv);
+    if (storedFile) {
+        window.pendingPdfFiles.set(inv.fileName, storedFile);
+    }
+    return storedFile;
+}
 
 // ========================================================================
 // 3. MOTOR DE INGENIERÍA: CONSTANTES TÉCNICAS BOE (6 PERIODOS)
@@ -507,6 +632,7 @@ function areDuplicatedEnergyAndTolls(energyItems = [], tollItems = []) {
 function sanitizeInvoiceForStorage(inv) {
     if (!inv || typeof inv !== 'object') return inv;
     const clone = { ...inv };
+    clone.fileName = String(clone.fileName || clone.invoiceNum || 'factura.pdf').trim();
     delete clone.invoicePreviewPages;
     delete clone.invoicePreview;
     delete clone.invoicePreviewTotalPages;
@@ -577,10 +703,12 @@ async function processFiles(files) {
             }
 
             console.log(`[Result] Datos extraídos:`, auditData);
+            auditData.fileName = String(auditData.fileName || file.name || auditData.invoiceNum || 'factura.pdf').trim();
             auditData.invoicePreviewPages = invoicePreviewPages;
             auditData.invoicePreview = invoicePreviewPages[0] || null;
             auditData.invoicePreviewTotalPages = Number(pdf.numPages || 0);
             auditData.invoicePreviewRenderedPages = invoicePreviewPages.length;
+            await saveInvoicePdfToStore(auditData, file);
             invoices.push(auditData);
 
             // Siempre guardar en historial local (incluidas rechazadas)
@@ -994,7 +1122,7 @@ function renderClients() {
     const filterTariffEl = document.getElementById('clients-filter-tariff');
     const filterCommercializerEl = document.getElementById('clients-filter-commercializer');
 
-    const allInvoices = [...dbInvoices, ...invoices];
+    const allInvoices = [...invoices, ...dbInvoices];
     if (allInvoices.length === 0) {
         clientsList.innerHTML = '<div class="card" style="padding:1rem;">No hay clientes todavía. Sube facturas para generarlos automáticamente.</div>';
         return;
@@ -3191,9 +3319,10 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
 // ========================================================================
 // 9. FUNCIONES DE GESTIÓN DE HISTORIAL
 // ========================================================================
-function deleteHistoryItem(index) {
+async function deleteHistoryItem(index) {
     if (confirm('¿Estás seguro de que quieres eliminar esta factura del historial?')) {
-        dbInvoices.splice(index, 1);
+        const removed = dbInvoices.splice(index, 1)[0];
+        await deleteInvoicePdfFromStore(removed);
         localStorage.setItem('audit_pro_db', JSON.stringify(dbInvoices));
         renderHistory();
         renderClients();
@@ -3201,10 +3330,11 @@ function deleteHistoryItem(index) {
     }
 }
 
-function clearAllHistory() {
+async function clearAllHistory() {
     if (confirm('¿Estás seguro de que quieres vaciar TODO el historial? Esta acción no se puede deshacer.')) {
         dbInvoices = [];
         localStorage.removeItem('audit_pro_db');
+        await clearInvoicePdfStore();
         renderHistory();
         renderClients();
         console.log('[History] Historial vaciado completamente');
@@ -3298,7 +3428,7 @@ function applyCommercializerProposal(invoiceIdx, commercializerIdx, scopeMode = 
     alert(`Propuesta aplicada: ${comm.name} en ${targets.length} suministro(s).`);
 }
 
-function openClientSupplyInvoice(rowIndex) {
+async function openClientSupplyInvoice(rowIndex) {
     console.log('[Clients] openClientSupplyInvoice', rowIndex, clientSupplyRows.length);
     const row = clientSupplyRows[rowIndex];
     if (!row || !row.invoice) {
@@ -3311,7 +3441,7 @@ function openClientSupplyInvoice(rowIndex) {
     if (!modal || !body) return;
 
     const inv = row.invoice;
-    const file = window.pendingPdfFiles.get(inv.fileName);
+    const file = await getInvoicePdfFile(inv);
     let viewerHtml = '';
 
     if (Array.isArray(inv.invoicePreviewPages) && inv.invoicePreviewPages.length > 0) {
@@ -3331,11 +3461,11 @@ function openClientSupplyInvoice(rowIndex) {
             : '';
         viewerHtml = `${fullPdfAction}${note}${pagesHtml}`;
     } else if (file) {
-        viewerHtml = '<div id="client-pdf-pages" class="card" style="padding:0.75rem; min-height: 280px;">Cargando vista previa del PDF...</div>';
+        viewerHtml = '<div id="client-pdf-pages" class="card" style="padding:0.75rem; min-height: 280px;">Cargando factura completa...</div>';
     } else if (inv.invoicePreview) {
         viewerHtml = `<img src="${inv.invoicePreview}" alt="Preview factura" style="width:100%; max-width:980px; border:1px solid #e2e8f0; border-radius:8px; display:block;">`;
     } else {
-        viewerHtml = '<div class="card" style="padding:1rem;">No hay PDF/preview disponible para esta factura en este navegador.</div>';
+        viewerHtml = '<div class="card" style="padding:1rem;">No hay PDF disponible para esta factura. Si la acabas de cargar, vuelve a procesarla para guardarla de forma persistente.</div>';
     }
 
     body.innerHTML = `
@@ -3357,20 +3487,20 @@ function openClientSupplyInvoice(rowIndex) {
     if (file && (!Array.isArray(inv.invoicePreviewPages) || inv.invoicePreviewPages.length === 0)) {
         const pagesContainer = document.getElementById('client-pdf-pages');
         if (pagesContainer) {
-            renderPdfFileFirstPage(file, pagesContainer).catch(err => {
+            renderPdfFileAllPages(file, pagesContainer).catch(err => {
                 console.error('[Clients] Error renderizando vista previa PDF:', err);
-                pagesContainer.innerHTML = '<div class="card" style="padding:1rem;">No se pudo renderizar el PDF completo.</div>';
+                pagesContainer.innerHTML = '<div class="card" style="padding:1rem;">No se pudo renderizar la factura completa.</div>';
             });
         }
     }
 }
 
-function openClientSupplyPdfOriginal(rowIndex) {
+async function openClientSupplyPdfOriginal(rowIndex) {
     const row = clientSupplyRows[rowIndex];
     const inv = row?.invoice;
-    const file = inv ? window.pendingPdfFiles.get(inv.fileName) : null;
+    const file = inv ? await getInvoicePdfFile(inv) : null;
     if (!file) {
-        alert('No se encontro el PDF original en memoria para esta sesion.');
+        alert('No se encontro el PDF original disponible para esta factura.');
         return;
     }
     const url = URL.createObjectURL(file);
