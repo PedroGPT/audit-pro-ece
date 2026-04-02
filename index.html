@@ -248,14 +248,14 @@
                     <label>Alcance de comparativa:</label>
                     <select id="compare-scope" style="width:100%; padding:0.55rem; border:1px solid #d1d5db; border-radius:6px;">
                         <option value="single">Individual (factura/suministro actual)</option>
-                        <option value="client-tariff">Multi-suministro (mismo cliente y misma tarifa)</option>
+                        <option value="client-tariff">Multisuministro / Multipunto (mismo cliente y misma tarifa)</option>
                     </select>
                 </div>
                 <div id="compare-selector-list" style="margin-bottom: 1.5rem;"></div>
                 <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
                     <button class="btn secondary" onclick="closeCompareSelectorModal()">Cancelar</button>
                     <button class="btn primary" onclick="doSingleComparison()">Comparativa Individual</button>
-                    <button class="btn primary" onclick="doMultipleComparison()" style="background-color: #0891b2;">Comparativa Múltiple</button>
+                    <button class="btn primary" onclick="doMultipleComparison()" style="background-color: #0891b2;">Comparativa Multisuministro</button>
                 </div>
             </div>
         </div>

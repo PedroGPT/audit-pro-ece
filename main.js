@@ -2147,7 +2147,7 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
         `;
     }).join('');
 
-    const scopeLabel = scopeMode === 'client-tariff' ? 'Multi-suministro (mismo cliente y tarifa)' : 'Suministro individual';
+    const scopeLabel = scopeMode === 'client-tariff' ? 'Multisuministro / Multipunto (mismo cliente y tarifa)' : 'Suministro individual';
     body.innerHTML = `
         <div class="card" style="padding:0.85rem; margin-bottom:1rem; background:#f8fafc; border:1px solid #e2e8f0;">
             <div><strong>Comercializadora propuesta:</strong> ${comm.name}</div>
@@ -2384,7 +2384,7 @@ function renderSingleComparison(invoiceIdx, commercializerIdx) {
     const compareInvoices = getCompareInvoices(inv);
     const metrics = computeComparisonMetrics(compareInvoices, comm);
     const scopeLabel = compareScope === 'client-tariff'
-        ? `Multi-suministro (${inv.clientName || 'Cliente'} | Tarifa ${inv.tariffType || 'N/D'})`
+        ? `Multisuministro / Multipunto (${inv.clientName || 'Cliente'} | Tarifa ${inv.tariffType || 'N/D'})`
         : 'Suministro individual';
 
     const rowsHtml = metrics.invoiceRows.map(r => `
@@ -2439,7 +2439,7 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
 
     const compareInvoices = getCompareInvoices(inv);
     const scopeLabel = compareScope === 'client-tariff'
-        ? `Multi-suministro (${inv.clientName || 'Cliente'} | Tarifa ${inv.tariffType || 'N/D'})`
+        ? `Multisuministro / Multipunto (${inv.clientName || 'Cliente'} | Tarifa ${inv.tariffType || 'N/D'})`
         : 'Suministro individual';
     const comms = commercializerIndices.map(idx => commercializers[idx]).filter(Boolean);
 
@@ -2535,7 +2535,7 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
     `).join('');
 
     const html = `
-        <h3>Comparativa Multiple de Comercializadoras</h3>
+        <h3>Comparativa Multisuministro (Multipunto) de Comercializadoras</h3>
         <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Tarifa:</strong> ${inv.tariffType || 'N/D'} | <strong>Alcance:</strong> ${scopeLabel}</p>
         <div class="card" style="padding:1rem; margin:0.75rem 0;">
             <h4 style="margin-bottom:0.5rem;">Resumen total actual del cliente (multipunto)</h4>
