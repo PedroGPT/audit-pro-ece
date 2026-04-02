@@ -148,6 +148,7 @@ function detectComercializadoraFromText(text) {
         'endesa', 'iberdrola', 'naturgy', 'repsol', 'totalenergies',
         'edp', 'holaluz', 'factorenergia', 'audax', 'fenie'
     ];
+
     const hit = known.find(name => lower.includes(name));
     if (hit) return hit.toUpperCase();
 
@@ -157,20 +158,53 @@ function detectComercializadoraFromText(text) {
     return 'N/D';
 }
 
-async function generatePdfFirstPagePreview(pdf) {
+async function generatePdfPagePreviews(pdf, maxPages = 8) {
     try {
-        const page = await pdf.getPage(1);
-        const viewport = page.getViewport({ scale: 0.6 });
+        const totalPages = Number(pdf?.numPages || 0);
+        const pagesToRender = Math.min(totalPages, maxPages);
+        const previews = [];
+
+        for (let i = 1; i <= pagesToRender; i++) {
+            const page = await pdf.getPage(i);
+            const viewport = page.getViewport({ scale: 1.4 });
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = Math.floor(viewport.width);
+            canvas.height = Math.floor(viewport.height);
+            await page.render({ canvasContext: context, viewport }).promise;
+            previews.push(canvas.toDataURL('image/png'));
+        }
+
+        return previews;
+    } catch (err) {
+        console.warn('[Preview] No se pudo generar previsualizacion de factura:', err);
+        return [];
+    }
+}
+
+async function renderPdfFileAllPages(file, container) {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const pagesHtml = [];
+
+    for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 1.25 });
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
         canvas.width = Math.floor(viewport.width);
         canvas.height = Math.floor(viewport.height);
         await page.render({ canvasContext: context, viewport }).promise;
-        return canvas.toDataURL('image/jpeg', 0.72);
-    } catch (err) {
-        console.warn('[Preview] No se pudo generar miniatura de factura:', err);
-        return null;
+
+        pagesHtml.push(`
+            <div style="margin-bottom: 1rem;">
+                <div style="font-size:0.85rem; color:#64748b; margin-bottom:0.25rem;">Pagina ${i}/${pdf.numPages}</div>
+                ${canvas.outerHTML}
+            </div>
+        `);
     }
+
+    container.innerHTML = `<div style="display:flex; flex-direction:column; align-items:center;">${pagesHtml.join('')}</div>`;
 }
 
 function detectTariffTypeFromText(text) {
@@ -400,7 +434,7 @@ async function processFiles(files) {
                 fullText += textContent.items.map(item => item.str).join(" ") + "\n";
             }
 
-            const invoicePreview = await generatePdfFirstPagePreview(pdf);
+            const invoicePreviewPages = await generatePdfPagePreviews(pdf, 8);
             
             console.log(`[PDF] Texto extraído (${fullText.length} caracteres):`, fullText.substring(0, 200) + "...");
 
@@ -421,7 +455,10 @@ async function processFiles(files) {
             }
 
             console.log(`[Result] Datos extraídos:`, auditData);
-            auditData.invoicePreview = invoicePreview || null;
+            auditData.invoicePreviewPages = invoicePreviewPages;
+            auditData.invoicePreview = invoicePreviewPages[0] || null;
+            auditData.invoicePreviewTotalPages = Number(pdf.numPages || 0);
+            auditData.invoicePreviewRenderedPages = invoicePreviewPages.length;
             invoices.push(auditData);
 
             // Siempre guardar en historial local (incluidas rechazadas)
@@ -603,11 +640,10 @@ function fallbackParseInvoiceText(text, fileName) {
     const textLower = text.toLowerCase();
     const invoice = {
         fileName,
-        invoiceNum: 'S/N',
+    let viewerHtml = '';
         clientName: 'Desconocido',
         supplyAddress: 'N/D',
-        comercializadora: 'N/D',
-        tariffType: 'N/D',
+        viewerHtml = '<div id="client-pdf-pages" class="card" style="padding:0.75rem; min-height: 240px;">Cargando PDF completo...</div>';
         period: 'N/D',
         consumption: 0,
         energyCost: 0,
@@ -1528,16 +1564,23 @@ function openClientSupplyInvoice(rowIndex) {
     const file = window.pendingPdfFiles.get(inv.fileName);
     let viewerHtml = '';
 
-    if (currentClientSupplyPdfUrl) {
-        URL.revokeObjectURL(currentClientSupplyPdfUrl);
-        currentClientSupplyPdfUrl = null;
-    }
-
     if (file) {
-        currentClientSupplyPdfUrl = URL.createObjectURL(file);
-        viewerHtml = `<iframe src="${currentClientSupplyPdfUrl}" style="width:100%; height:560px; border:1px solid #e2e8f0; border-radius:8px;" title="Factura PDF"></iframe>`;
+        viewerHtml = '<div id="client-pdf-pages" class="card" style="padding:0.75rem; min-height: 280px;">Cargando PDF completo...</div>';
+    } else if (Array.isArray(inv.invoicePreviewPages) && inv.invoicePreviewPages.length > 0) {
+        const pagesHtml = inv.invoicePreviewPages.map((img, idx) => `
+            <div style="margin-bottom: 1rem;">
+                <div style="font-size:0.85rem; color:#64748b; margin-bottom:0.25rem;">Pagina ${idx + 1}</div>
+                <img src="${img}" alt="Preview factura pagina ${idx + 1}" style="width:100%; max-width:980px; border:1px solid #e2e8f0; border-radius:8px; display:block;">
+            </div>
+        `).join('');
+        const total = Number(inv.invoicePreviewTotalPages || inv.invoicePreviewPages.length);
+        const rendered = Number(inv.invoicePreviewRenderedPages || inv.invoicePreviewPages.length);
+        const note = rendered < total
+            ? `<div class="card" style="padding:0.75rem; margin-bottom:0.75rem;">Mostrando ${rendered} de ${total} paginas en previsualizacion.</div>`
+            : '';
+        viewerHtml = `${note}${pagesHtml}`;
     } else if (inv.invoicePreview) {
-        viewerHtml = `<img src="${inv.invoicePreview}" alt="Preview factura" style="width:100%; max-width:900px; border:1px solid #e2e8f0; border-radius:8px; display:block;">`;
+        viewerHtml = `<img src="${inv.invoicePreview}" alt="Preview factura" style="width:100%; max-width:980px; border:1px solid #e2e8f0; border-radius:8px; display:block;">`;
     } else {
         viewerHtml = '<div class="card" style="padding:1rem;">No hay PDF/preview disponible para esta factura en este navegador.</div>';
     }
@@ -1557,15 +1600,21 @@ function openClientSupplyInvoice(rowIndex) {
 
     modalGuardUntil.clientSupply = Date.now() + 250;
     modal.classList.remove('hidden');
+
+    if (file) {
+        const pagesContainer = document.getElementById('client-pdf-pages');
+        if (pagesContainer) {
+            renderPdfFileAllPages(file, pagesContainer).catch(err => {
+                console.error('[Clients] Error renderizando PDF completo:', err);
+                pagesContainer.innerHTML = '<div class="card" style="padding:1rem;">No se pudo renderizar el PDF completo.</div>';
+            });
+        }
+    }
 }
 
 function closeClientSupplyInvoiceModal() {
     const modal = document.getElementById('client-supply-invoice-modal');
     if (modal) modal.classList.add('hidden');
-    if (currentClientSupplyPdfUrl) {
-        URL.revokeObjectURL(currentClientSupplyPdfUrl);
-        currentClientSupplyPdfUrl = null;
-    }
 }
 
 // ========================================================================
