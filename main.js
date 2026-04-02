@@ -30,7 +30,7 @@ let invoices = [];
 let dbInvoices = []; 
 let currentAudit = null;
 let supabaseClient = null;
-let modalGuardUntil = { detail: 0, commercializer: 0, compareSelector: 0, clientSupply: 0 };
+let modalGuardUntil = { detail: 0, commercializer: 0, compareSelector: 0, clientSupply: 0, compareTransparency: 0 };
 let clientSupplyRows = [];
 let currentClientSupplyPdfUrl = null;
 let supplyProposals = {};
@@ -1497,13 +1497,16 @@ function computeComparisonMetrics(compareInvoices, comm) {
     compareInvoices.forEach(inv => {
         const allowedPeriods = getActivePeriodsByTariff(inv.tariffType, inv.energyPeriodItems || []);
         const energyItems = (inv.energyPeriodItems || []).filter(item => allowedPeriods.includes(Number(item.period)));
+        const tollItems = (inv.tollPeriodItems || []).filter(item => allowedPeriods.includes(Number(item.period)));
+        const simulation = buildInvoiceTransparencySimulation(inv, comm);
 
         const consumption = energyItems.reduce((sum, item) => sum + Number(item.kwh || 0), 0);
-        const oldEnergy = energyItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0);
-        const proposedEnergy = energyItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(comm.energyPrices?.[item.period] || 0)), 0);
+        const oldEnergy = energyItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0)
+            + tollItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0);
+        const proposedEnergy = energyItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(comm.energyPrices?.[item.period] || 0)), 0)
+            + tollItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0);
         const baseTotal = Number(inv.totalCalculated || 0);
-        const invEnergyReference = Number(inv.energyCost || 0) > 0 ? Number(inv.energyCost || 0) : oldEnergy;
-        const simulatedTotal = baseTotal - invEnergyReference + proposedEnergy;
+        const simulatedTotal = simulation.newTotal;
 
         totalConsumption += consumption;
         oldEnergyCost += oldEnergy;
@@ -1546,12 +1549,15 @@ function computeComparisonMetrics(compareInvoices, comm) {
 function computeInvoiceProposalMetrics(inv, comm) {
     const allowedPeriods = getActivePeriodsByTariff(inv.tariffType, inv.energyPeriodItems || []);
     const energyItems = (inv.energyPeriodItems || []).filter(item => allowedPeriods.includes(Number(item.period)));
+    const tollItems = (inv.tollPeriodItems || []).filter(item => allowedPeriods.includes(Number(item.period)));
+    const simulation = buildInvoiceTransparencySimulation(inv, comm);
     const consumption = energyItems.reduce((sum, item) => sum + Number(item.kwh || 0), 0);
-    const oldEnergy = energyItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0);
-    const newEnergy = energyItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(comm.energyPrices?.[item.period] || 0)), 0);
+    const oldEnergy = energyItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0)
+        + tollItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0);
+    const newEnergy = energyItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(comm.energyPrices?.[item.period] || 0)), 0)
+        + tollItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0);
     const oldTotal = Number(inv.totalCalculated || 0);
-    const invEnergyReference = Number(inv.energyCost || 0) > 0 ? Number(inv.energyCost || 0) : oldEnergy;
-    const newTotalSim = oldTotal - invEnergyReference + newEnergy;
+    const newTotalSim = simulation.newTotal;
     return {
         consumption,
         oldEnergy,
@@ -1563,6 +1569,402 @@ function computeInvoiceProposalMetrics(inv, comm) {
         newTotalSim,
         totalSaving: oldTotal - newTotalSim
     };
+}
+
+function inferInvoiceBillingDays(inv) {
+    const fromItems = (inv.powerPeriodItems || []).map(i => Number(i.days || 0)).find(d => d > 0);
+    if (fromItems) return fromItems;
+
+    const period = String(inv.period || '');
+    const rangeMatch = period.match(/(\d{1,2}[\/\.]\d{1,2}[\/\.]\d{2,4})\s*(?:-|a|al)\s*(\d{1,2}[\/\.]\d{1,2}[\/\.]\d{2,4})/i);
+    if (!rangeMatch) return 30;
+
+    const parseDate = (raw) => {
+        const sep = raw.includes('/') ? '/' : '.';
+        const [d, m, y] = raw.split(sep).map(v => Number(v));
+        const year = y < 100 ? (2000 + y) : y;
+        return new Date(year, (m || 1) - 1, d || 1);
+    };
+
+    const d1 = parseDate(rangeMatch[1]);
+    const d2 = parseDate(rangeMatch[2]);
+    const diff = Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24));
+    return diff > 0 && diff <= 365 ? diff : 30;
+}
+
+function buildInvoiceTransparencySimulation(inv, comm) {
+    const allowedEnergyPeriods = getActivePeriodsByTariff(inv.tariffType, inv.energyPeriodItems || []);
+    const energyItems = (inv.energyPeriodItems || [])
+        .filter(item => allowedEnergyPeriods.includes(Number(item.period)))
+        .sort((a, b) => Number(a.period || 0) - Number(b.period || 0));
+
+    const rawEnergyRows = energyItems.map(item => {
+        const period = Number(item.period || 0);
+        const kwh = Number(item.kwh || 0);
+        const oldUnit = Number(item.unitPriceKwh || 0);
+        const newUnit = Number(comm.energyPrices?.[period] || 0);
+        const tollItem = (inv.tollPeriodItems || []).find(t => Number(t.period || 0) === period);
+        const rawTollUnit = Number(tollItem?.unitPriceKwh || 0);
+        const oldAmount = kwh * oldUnit;
+        const newAmount = kwh * newUnit;
+        const rawTollAmount = kwh * rawTollUnit;
+        return {
+            period,
+            kwh,
+            oldUnit,
+            newUnit,
+            oldAmount,
+            newAmount,
+            rawTollUnit,
+            rawTollAmount
+        };
+    });
+
+    const rawTollTotal = rawEnergyRows.reduce((sum, r) => sum + r.rawTollAmount, 0);
+    const oldCommodityEnergy = rawEnergyRows.reduce((sum, r) => sum + r.oldAmount, 0);
+    const newCommodityEnergy = rawEnergyRows.reduce((sum, r) => sum + r.newAmount, 0);
+    const oldEnergyFromDetail = oldCommodityEnergy + rawTollTotal;
+    const oldEnergyReference = oldEnergyFromDetail > 0
+        ? oldEnergyFromDetail
+        : (Number(inv.energyCost || 0) > 0 ? Number(inv.energyCost || 0) : oldCommodityEnergy);
+    const preservedEnergyFixedTotal = oldEnergyReference - oldCommodityEnergy;
+    const totalKwh = rawEnergyRows.reduce((sum, r) => sum + r.kwh, 0);
+
+    const energyRows = rawEnergyRows.map(row => {
+        let preservedAmount = 0;
+        if (Math.abs(rawTollTotal) > 0.000001) {
+            preservedAmount = preservedEnergyFixedTotal * (row.rawTollAmount / rawTollTotal);
+        } else if (totalKwh > 0) {
+            preservedAmount = preservedEnergyFixedTotal * (row.kwh / totalKwh);
+        } else if (rawEnergyRows.length > 0) {
+            preservedAmount = preservedEnergyFixedTotal / rawEnergyRows.length;
+        }
+
+        const preservedUnit = row.kwh > 0 ? preservedAmount / row.kwh : 0;
+        const oldTotalAmount = row.oldAmount + preservedAmount;
+        const newTotalAmount = row.newAmount + preservedAmount;
+
+        return {
+            period: row.period,
+            kwh: row.kwh,
+            oldUnit: row.oldUnit,
+            newUnit: row.newUnit,
+            tollUnit: preservedUnit,
+            oldAmount: row.oldAmount,
+            newAmount: row.newAmount,
+            tollAmount: preservedAmount,
+            oldTotalAmount,
+            newTotalAmount,
+            delta: oldTotalAmount - newTotalAmount
+        };
+    });
+
+    const tollEnergyCost = energyRows.reduce((sum, r) => sum + r.tollAmount, 0);
+    const newEnergy = energyRows.reduce((sum, r) => sum + r.newTotalAmount, 0);
+
+    const allowedPowerPeriods = getConfiguredPowerPeriodsByTariff(inv.tariffType || comm.tariffType || '2.0');
+    const billingDays = inferInvoiceBillingDays(inv);
+    const powerItems = (inv.powerPeriodItems || [])
+        .filter(item => allowedPowerPeriods.includes(Number(item.period)) && Number(item.kw || 0) > 0)
+        .sort((a, b) => Number(a.period || 0) - Number(b.period || 0));
+
+    const rawPowerRows = powerItems.map(item => {
+        const period = Number(item.period || 0);
+        const kw = Number(item.kw || 0);
+        const days = Number(item.days || 0) > 0 ? Number(item.days || 0) : billingDays;
+        const oldUnit = Number(item.unitPriceKw || 0);
+        const configuredNew = Number(comm.powerPrices?.[period] || 0);
+        const newUnit = configuredNew > 0 ? configuredNew : oldUnit;
+        const oldAmount = kw * oldUnit * days;
+        const newAmount = kw * newUnit * days;
+        return {
+            period,
+            kw,
+            days,
+            oldUnit,
+            newUnit,
+            oldAmount,
+            newAmount,
+            delta: oldAmount - newAmount
+        };
+    });
+
+    const oldPowerFromRows = rawPowerRows.reduce((sum, r) => sum + r.oldAmount, 0);
+    const newPowerFromRows = rawPowerRows.reduce((sum, r) => sum + r.newAmount, 0);
+    const oldPowerReference = Number(inv.powerCost || 0) > 0 ? Number(inv.powerCost || 0) : oldPowerFromRows;
+    const preservedPowerFixedTotal = oldPowerReference - oldPowerFromRows;
+    const powerRows = rawPowerRows.map(row => {
+        const share = oldPowerFromRows > 0 ? (row.oldAmount / oldPowerFromRows) : (rawPowerRows.length > 0 ? 1 / rawPowerRows.length : 0);
+        const preservedAmount = preservedPowerFixedTotal * share;
+        const oldTotalAmount = row.oldAmount + preservedAmount;
+        const newTotalAmount = row.newAmount + preservedAmount;
+        return {
+            period: row.period,
+            kw: row.kw,
+            days: row.days,
+            oldUnit: row.oldUnit,
+            newUnit: row.newUnit,
+            oldAmount: oldTotalAmount,
+            newAmount: newTotalAmount,
+            delta: oldTotalAmount - newTotalAmount
+        };
+    });
+    const newPower = powerRows.length > 0 ? powerRows.reduce((sum, r) => sum + r.newAmount, 0) : oldPowerReference;
+
+    const others = Number(inv.othersCost || 0);
+    const alquiler = Number(inv.alquiler || 0);
+    const reactive = Number(inv.reactiveCost || 0);
+
+    const oldSubtotalBase = Number(inv.breakdown?.subtotalBase || 0) > 0
+        ? Number(inv.breakdown.subtotalBase)
+        : (oldEnergyReference + oldPowerReference + others + alquiler + reactive);
+    const newSubtotalBase = oldSubtotalBase - oldEnergyReference - oldPowerReference + newEnergy + newPower;
+
+    const ieeRate = oldSubtotalBase > 0
+        ? (Number(inv.breakdown?.iee || 0) / oldSubtotalBase)
+        : BOE.taxes.iee;
+    const oldIee = Number(inv.breakdown?.iee || 0) || (oldSubtotalBase * ieeRate);
+    const newIee = newSubtotalBase * ieeRate;
+
+    const oldSubtotalConIee = oldSubtotalBase + oldIee;
+    const oldTaxAmount = Number(inv.taxValue || inv.breakdown?.taxAmount || 0);
+    const isIgic = String(inv.taxName || inv.breakdown?.taxName || '').toUpperCase() === 'IGIC';
+    const fallbackTaxRate = isIgic ? 0.07 : BOE.taxes.iva;
+    const taxRate = oldSubtotalConIee > 0 ? (oldTaxAmount / oldSubtotalConIee) : fallbackTaxRate;
+
+    const newSubtotalConIee = newSubtotalBase + newIee;
+    const newTaxAmount = newSubtotalConIee * taxRate;
+
+    const oldTotal = Number(inv.totalCalculated || 0);
+    const newTotal = newSubtotalConIee + newTaxAmount;
+
+    return {
+        invoiceNum: inv.invoiceNum || 'S/N',
+        clientName: inv.clientName || 'N/D',
+        cups: inv.cups || 'N/D',
+        period: inv.period || 'N/D',
+        tariffType: inv.tariffType || 'N/D',
+        taxName: isIgic ? 'IGIC' : 'IVA',
+        taxRate,
+        billingDays,
+        energyRows,
+        powerRows,
+        oldEnergy: oldEnergyReference,
+        newEnergy,
+        oldCommodityEnergy,
+        newCommodityEnergy,
+        tollEnergyCost,
+        preservedEnergyFixedTotal,
+        oldEnergyReference,
+        oldPowerReference,
+        newPower,
+        others,
+        alquiler,
+        reactive,
+        oldSubtotalBase,
+        newSubtotalBase,
+        oldIee,
+        newIee,
+        oldTaxAmount,
+        newTaxAmount,
+        oldTotal,
+        newTotal,
+        energySaving: oldEnergyReference - newEnergy,
+        powerImpact: oldPowerReference - newPower,
+        totalSaving: oldTotal - newTotal
+    };
+}
+
+function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMode = 'single') {
+    const baseInv = compareBaseInvoice || invoices[invoiceIdx];
+    const comm = commercializers[commercializerIdx];
+    if (!baseInv || !comm) {
+        alert('No se pudo abrir el informe transparente de comparativa.');
+        return;
+    }
+
+    const targets = getCompareInvoicesByScope(baseInv, scopeMode);
+    if (targets.length === 0) {
+        alert('No hay facturas para construir el informe de comparativa.');
+        return;
+    }
+
+    const modal = document.getElementById('comparison-transparency-modal');
+    const body = document.getElementById('comparison-transparency-body');
+    if (!modal || !body) return;
+
+    const simulations = targets.map(inv => buildInvoiceTransparencySimulation(inv, comm));
+
+    const totals = simulations.reduce((acc, s) => {
+        acc.oldEnergy += s.oldEnergyReference;
+        acc.newEnergy += s.newEnergy;
+        acc.oldPower += s.oldPowerReference;
+        acc.newPower += s.newPower;
+        acc.oldTotal += s.oldTotal;
+        acc.newTotal += s.newTotal;
+        return acc;
+    }, { oldEnergy: 0, newEnergy: 0, oldPower: 0, newPower: 0, oldTotal: 0, newTotal: 0 });
+
+    const blocks = simulations.map(s => {
+        const energyRowsHtml = s.energyRows.map(r => `
+            <tr>
+                <td>P${r.period}</td>
+                <td>${r.kwh.toFixed(2)} kWh</td>
+                <td>${r.oldUnit.toFixed(6)} €/kWh</td>
+                <td>${r.newUnit.toFixed(6)} €/kWh</td>
+                <td>${r.tollUnit.toFixed(6)} €/kWh</td>
+                <td>${formatCurrency(r.oldTotalAmount)}</td>
+                <td>${formatCurrency(r.newTotalAmount)}</td>
+                <td style="font-weight:700; color:${r.delta >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(r.delta)}</td>
+            </tr>
+        `).join('');
+
+        const powerRowsHtml = s.powerRows.map(r => `
+            <tr>
+                <td>P${r.period}</td>
+                <td>${r.kw.toFixed(2)} kW</td>
+                <td>${r.days}</td>
+                <td>${r.oldUnit.toFixed(6)} €/kW/dia</td>
+                <td>${r.newUnit.toFixed(6)} €/kW/dia</td>
+                <td>${formatCurrency(r.oldAmount)}</td>
+                <td>${formatCurrency(r.newAmount)}</td>
+                <td style="font-weight:700; color:${r.delta >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(r.delta)}</td>
+            </tr>
+        `).join('');
+
+        return `
+            <div class="card" style="padding:1rem; margin-bottom:1rem; border:1px solid #dbeafe;">
+                <h3 style="margin-bottom:0.5rem;">Factura ${s.invoiceNum}</h3>
+                <p style="margin:0 0 0.65rem; color:#334155;"><strong>Cliente:</strong> ${s.clientName} | <strong>CUPS:</strong> ${s.cups} | <strong>Periodo:</strong> ${s.period} | <strong>Tarifa:</strong> ${s.tariffType}</p>
+
+                <h4 style="margin:0.75rem 0 0.5rem;">1) Energia por periodos</h4>
+                <div style="overflow-x:auto; margin-bottom:0.75rem;">
+                    <table class="modal-table">
+                        <thead>
+                            <tr><th>Periodo</th><th>Consumo</th><th>Energia antes</th><th>Energia despues</th><th>Peajes/cargos</th><th>Total antes</th><th>Total despues</th><th>Diferencia</th></tr>
+                        </thead>
+                        <tbody>
+                            ${energyRowsHtml || '<tr><td colspan="8">No hay periodos de energia disponibles.</td></tr>'}
+                            <tr style="font-weight:700; background:#f8fafc;"><td colspan="5" style="text-align:right;">Subtotal energia comercializada</td><td>${formatCurrency(s.oldCommodityEnergy)}</td><td>${formatCurrency(s.newCommodityEnergy)}</td><td style="color:${(s.oldCommodityEnergy - s.newCommodityEnergy) >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(s.oldCommodityEnergy - s.newCommodityEnergy)}</td></tr>
+                            <tr style="font-weight:700; background:#f8fafc;"><td colspan="5" style="text-align:right;">Subtotal peajes/cargos energia</td><td>${formatCurrency(s.tollEnergyCost)}</td><td>${formatCurrency(s.tollEnergyCost)}</td><td>${formatCurrency(0)}</td></tr>
+                            <tr style="font-weight:700; background:#f8fafc;"><td colspan="5" style="text-align:right;">Total energia facturada</td><td>${formatCurrency(s.oldEnergyReference)}</td><td>${formatCurrency(s.newEnergy)}</td><td style="color:${s.energySaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(s.energySaving)}</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h4 style="margin:0.75rem 0 0.5rem;">2) Potencia por periodos</h4>
+                <div style="overflow-x:auto; margin-bottom:0.75rem;">
+                    <table class="modal-table">
+                        <thead>
+                            <tr><th>Periodo</th><th>Potencia</th><th>Dias</th><th>Precio antes</th><th>Precio despues</th><th>Coste antes</th><th>Coste despues</th><th>Impacto</th></tr>
+                        </thead>
+                        <tbody>
+                            ${powerRowsHtml || '<tr><td colspan="8">No hay periodos de potencia extraidos; se mantiene el coste original de potencia.</td></tr>'}
+                            <tr style="font-weight:700; background:#f8fafc;"><td colspan="6" style="text-align:right;">Total potencia</td><td>${formatCurrency(s.newPower)}</td><td style="color:${s.powerImpact >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(s.powerImpact)}</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h4 style="margin:0.75rem 0 0.5rem;">3) Factura completa simulada (transparente)</h4>
+                <div style="overflow-x:auto;">
+                    <table class="modal-table">
+                        <thead>
+                            <tr><th>Concepto</th><th>Antes</th><th>Despues</th><th>Diferencia</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr><td>Energia comercializada</td><td>${formatCurrency(s.oldCommodityEnergy)}</td><td>${formatCurrency(s.newCommodityEnergy)}</td><td style="color:${(s.oldCommodityEnergy - s.newCommodityEnergy) >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(s.oldCommodityEnergy - s.newCommodityEnergy)}</td></tr>
+                            <tr><td>Peajes/cargos energia</td><td>${formatCurrency(s.tollEnergyCost)}</td><td>${formatCurrency(s.tollEnergyCost)}</td><td>${formatCurrency(0)}</td></tr>
+                            <tr><td>Energia total facturada</td><td>${formatCurrency(s.oldEnergyReference)}</td><td>${formatCurrency(s.newEnergy)}</td><td style="color:${s.energySaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(s.energySaving)}</td></tr>
+                            <tr><td>Potencia</td><td>${formatCurrency(s.oldPowerReference)}</td><td>${formatCurrency(s.newPower)}</td><td style="color:${s.powerImpact >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(s.powerImpact)}</td></tr>
+                            <tr><td>Otros conceptos</td><td>${formatCurrency(s.others)}</td><td>${formatCurrency(s.others)}</td><td>${formatCurrency(0)}</td></tr>
+                            <tr><td>Alquiler</td><td>${formatCurrency(s.alquiler)}</td><td>${formatCurrency(s.alquiler)}</td><td>${formatCurrency(0)}</td></tr>
+                            <tr><td>Reactiva</td><td>${formatCurrency(s.reactive)}</td><td>${formatCurrency(s.reactive)}</td><td>${formatCurrency(0)}</td></tr>
+                            <tr><td>Impuesto electrico (IEE)</td><td>${formatCurrency(s.oldIee)}</td><td>${formatCurrency(s.newIee)}</td><td>${formatCurrency(s.oldIee - s.newIee)}</td></tr>
+                            <tr><td>${s.taxName} (${(s.taxRate * 100).toFixed(2)}%)</td><td>${formatCurrency(s.oldTaxAmount)}</td><td>${formatCurrency(s.newTaxAmount)}</td><td>${formatCurrency(s.oldTaxAmount - s.newTaxAmount)}</td></tr>
+                            <tr style="font-weight:700; background:#eef2ff;"><td>Total factura</td><td>${formatCurrency(s.oldTotal)}</td><td>${formatCurrency(s.newTotal)}</td><td style="color:${s.totalSaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(s.totalSaving)}</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h4 style="margin:0.75rem 0 0.5rem;">4) Como se ha calculado esta nueva factura</h4>
+                <div style="overflow-x:auto;">
+                    <table class="modal-table">
+                        <thead>
+                            <tr><th>Bloque</th><th>Criterio aplicado</th><th>Calculo</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Base original</td>
+                                <td>Se toma la factura ya analizada del cliente como referencia.</td>
+                                <td>Energia original = ${formatCurrency(s.oldEnergyReference)} | Potencia original = ${formatCurrency(s.oldPowerReference)} | Otros fijos = ${formatCurrency(s.others + s.alquiler + s.reactive)}</td>
+                            </tr>
+                            <tr>
+                                <td>Energia nueva</td>
+                                <td>Se sustituyen solo los precios de energia por periodo; los peajes/cargos extraidos se mantienen.</td>
+                                <td>Energia nueva = Energia comercializada nueva ${formatCurrency(s.newCommodityEnergy)} + parte fija energia ${formatCurrency(s.tollEnergyCost)} = ${formatCurrency(s.newEnergy)}</td>
+                            </tr>
+                            <tr>
+                                <td>Potencia nueva</td>
+                                <td>Se recalculan los periodos de potencia con los nuevos precios configurados; lo no variable queda preservado.</td>
+                                <td>Potencia nueva = ${formatCurrency(s.newPower)}</td>
+                            </tr>
+                            <tr>
+                                <td>Base imponible nueva</td>
+                                <td>Se mantiene el resto de conceptos exactamente igual.</td>
+                                <td>Nueva base = Energia ${formatCurrency(s.newEnergy)} + Potencia ${formatCurrency(s.newPower)} + Otros ${formatCurrency(s.others)} + Alquiler ${formatCurrency(s.alquiler)} + Reactiva ${formatCurrency(s.reactive)} = ${formatCurrency(s.newSubtotalBase)}</td>
+                            </tr>
+                            <tr>
+                                <td>Impuestos</td>
+                                <td>Se recalculan sobre la nueva base imponible.</td>
+                                <td>IEE nuevo = ${formatCurrency(s.newIee)} | ${s.taxName} nuevo = ${formatCurrency(s.newTaxAmount)} | Total nuevo = ${formatCurrency(s.newTotal)}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    const scopeLabel = scopeMode === 'client-tariff' ? 'Multi-suministro (mismo cliente y tarifa)' : 'Suministro individual';
+    body.innerHTML = `
+        <div class="card" style="padding:0.85rem; margin-bottom:1rem; background:#f8fafc; border:1px solid #e2e8f0;">
+            <div><strong>Comercializadora propuesta:</strong> ${comm.name}</div>
+            <div><strong>Alcance:</strong> ${scopeLabel}</div>
+            <div style="margin-top:0.5rem; display:grid; grid-template-columns: repeat(3, minmax(180px,1fr)); gap:0.6rem;">
+                <div><small style="color:#64748b;">Energia (antes/despues)</small><div style="font-weight:700;">${formatCurrency(totals.oldEnergy)} / ${formatCurrency(totals.newEnergy)}</div></div>
+                <div><small style="color:#64748b;">Potencia (antes/despues)</small><div style="font-weight:700;">${formatCurrency(totals.oldPower)} / ${formatCurrency(totals.newPower)}</div></div>
+                <div><small style="color:#64748b;">Total factura (antes/despues)</small><div style="font-weight:700; color:${(totals.oldTotal - totals.newTotal) >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(totals.oldTotal)} / ${formatCurrency(totals.newTotal)}</div></div>
+            </div>
+            <p style="margin:0.65rem 0 0; color:#475569;">Esta simulacion parte de la factura original ya analizada del cliente. Solo cambian energia y potencia con los nuevos precios; otros conceptos, alquiler y reactiva se mantienen. Los impuestos se recalculan sobre la nueva base.</p>
+        </div>
+        <div class="card" style="padding:0.85rem; margin-bottom:1rem; border:1px solid #e5e7eb;">
+            <h3 style="margin-bottom:0.5rem;">Reglas de transparencia del calculo</h3>
+            <div style="overflow-x:auto;">
+                <table class="modal-table">
+                    <thead>
+                        <tr><th>Elemento</th><th>Tratamiento en la simulacion</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>Factura base</td><td>Se usa la factura original ya analizada en el detalle del cliente.</td></tr>
+                        <tr><td>Energia</td><td>Se recalcula con los nuevos precios por periodo aplicados al mismo consumo extraido.</td></tr>
+                        <tr><td>Potencia</td><td>Se recalcula con los nuevos precios por periodo sobre la misma potencia y mismos dias.</td></tr>
+                        <tr><td>Peajes/cargos de energia</td><td>Se conservan como parte fija de la energia ya extraida de la factura.</td></tr>
+                        <tr><td>Otros conceptos, alquiler y reactiva</td><td>Se mantienen exactamente iguales a la factura original.</td></tr>
+                        <tr><td>IEE e IVA/IGIC</td><td>Se recalculan automaticamente sobre la nueva base imponible.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        ${blocks}
+    `;
+
+    modalGuardUntil.compareTransparency = Date.now() + 250;
+    modal.classList.remove('hidden');
+}
+
+function closeComparisonTransparencyModal() {
+    const modal = document.getElementById('comparison-transparency-modal');
+    if (modal) modal.classList.add('hidden');
 }
 
 function renderProposals() {
@@ -1786,9 +2188,10 @@ function renderSingleComparison(invoiceIdx, commercializerIdx) {
             <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Ahorro energia</div><div style="font-size:1.1rem; font-weight:700; color:${metrics.energySaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(metrics.energySaving)}</div></div>
             <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Factura simulada</div><div style="font-size:1.1rem; font-weight:700;">${formatCurrency(metrics.newTotalInvoiceSim)}</div></div>
         </div>
-        <p style="color:#64748b; margin:0 0 0.75rem;">La potencia se mantiene en la simulacion; el cambio aplicado es sobre energia para estimar ahorro.</p>
+        <p style="color:#64748b; margin:0 0 0.75rem;">La vista rapida prioriza energia; usa "Ver informe transparente" para revisar tambien impacto de potencia, impuestos y total final antes/despues.</p>
         <div style="margin-bottom:0.75rem;">
             <button class="btn primary" onclick="applyCommercializerProposal(${invoiceIdx}, ${commercializerIdx}, '${compareScope}')">Aplicar propuesta: ${comm.name}</button>
+            <button class="btn secondary" onclick="openComparisonTransparencyModal(${invoiceIdx}, ${commercializerIdx}, '${compareScope}')" style="margin-left:0.5rem;">Ver informe transparente</button>
         </div>
         <div style="overflow-x:auto;">
             <table class="modal-table">
@@ -1824,6 +2227,74 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
         return { comm: c, metrics: m, idx };
     }).sort((a, b) => b.metrics.energySaving - a.metrics.energySaving);
 
+    const baselineBySupply = compareInvoices.map(item => {
+        const allowedPeriods = getActivePeriodsByTariff(item.tariffType, item.energyPeriodItems || []);
+        const energyItems = (item.energyPeriodItems || []).filter(p => allowedPeriods.includes(Number(p.period)));
+        const consumption = energyItems.reduce((sum, p) => sum + Number(p.kwh || 0), 0);
+        const energyCost = Number(item.energyCost || 0) > 0
+            ? Number(item.energyCost || 0)
+            : energyItems.reduce((sum, p) => sum + (Number(p.kwh || 0) * Number(p.unitPriceKwh || 0)), 0);
+        const powerCost = Number(item.powerCost || 0);
+        const total = Number(item.totalCalculated || 0);
+        return {
+            invoiceNum: item.invoiceNum || 'S/N',
+            cups: item.cups || 'N/D',
+            period: item.period || 'N/D',
+            consumption,
+            energyCost,
+            powerCost,
+            total
+        };
+    });
+
+    const baselineTotals = baselineBySupply.reduce((acc, row) => {
+        acc.consumption += row.consumption;
+        acc.energy += row.energyCost;
+        acc.power += row.powerCost;
+        acc.total += row.total;
+        return acc;
+    }, { consumption: 0, energy: 0, power: 0, total: 0 });
+
+    const baselineRowsHtml = baselineBySupply.map(row => `
+        <tr>
+            <td>${row.invoiceNum}</td>
+            <td>${row.cups}</td>
+            <td>${row.period}</td>
+            <td>${row.consumption.toFixed(2)} kWh</td>
+            <td>${formatCurrency(row.energyCost)}</td>
+            <td>${formatCurrency(row.powerCost)}</td>
+            <td>${formatCurrency(row.total)}</td>
+        </tr>
+    `).join('');
+
+    const bestOption = rankingRows[0] || null;
+    const bestScenarioBySupply = bestOption
+        ? compareInvoices.map(item => buildInvoiceTransparencySimulation(item, bestOption.comm))
+        : [];
+
+    const bestTotals = bestScenarioBySupply.reduce((acc, row) => {
+        acc.oldTotal += row.oldTotal;
+        acc.newTotal += row.newTotal;
+        acc.oldEnergy += row.oldEnergyReference;
+        acc.newEnergy += row.newEnergy;
+        acc.oldPower += row.oldPowerReference;
+        acc.newPower += row.newPower;
+        return acc;
+    }, { oldTotal: 0, newTotal: 0, oldEnergy: 0, newEnergy: 0, oldPower: 0, newPower: 0 });
+
+    const bestRowsHtml = bestScenarioBySupply.map(row => `
+        <tr>
+            <td>${row.invoiceNum}</td>
+            <td>${row.cups}</td>
+            <td>${formatCurrency(row.oldEnergyReference)}</td>
+            <td>${formatCurrency(row.newEnergy)}</td>
+            <td style="color:${row.powerImpact >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(row.powerImpact)}</td>
+            <td>${formatCurrency(row.oldTotal)}</td>
+            <td>${formatCurrency(row.newTotal)}</td>
+            <td style="font-weight:700; color:${row.totalSaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(row.totalSaving)}</td>
+        </tr>
+    `).join('');
+
     const rowsHtml = rankingRows.map(({ comm, metrics, idx }) => `
         <tr>
             <td><strong>${comm.name}</strong></td>
@@ -1834,13 +2305,92 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
             <td>${formatCurrency(metrics.oldTotalInvoice)}</td>
             <td>${formatCurrency(metrics.newTotalInvoiceSim)}</td>
             <td style="font-weight:700; color:${metrics.totalSaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(metrics.totalSaving)}</td>
-            <td><button class="btn primary btn-sm" onclick="applyCommercializerProposal(${invoiceIdx}, ${idx}, '${compareScope}')">Aplicar</button></td>
+            <td>
+                <button class="btn primary btn-sm" onclick="applyCommercializerProposal(${invoiceIdx}, ${idx}, '${compareScope}')">Aplicar</button>
+                <button class="btn secondary btn-sm" onclick="openComparisonTransparencyModal(${invoiceIdx}, ${idx}, '${compareScope}')" style="margin-left:0.35rem;">Informe</button>
+            </td>
         </tr>
     `).join('');
 
     const html = `
         <h3>Comparativa Multiple de Comercializadoras</h3>
         <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Tarifa:</strong> ${inv.tariffType || 'N/D'} | <strong>Alcance:</strong> ${scopeLabel}</p>
+        <div class="card" style="padding:1rem; margin:0.75rem 0;">
+            <h4 style="margin-bottom:0.5rem;">Resumen total actual del cliente (multipunto)</h4>
+            <div style="display:grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap:0.65rem;">
+                <div><small style="color:#64748b;">Suministros</small><div style="font-weight:700;">${baselineBySupply.length}</div></div>
+                <div><small style="color:#64748b;">Consumo total</small><div style="font-weight:700;">${baselineTotals.consumption.toFixed(2)} kWh</div></div>
+                <div><small style="color:#64748b;">Coste energia</small><div style="font-weight:700;">${formatCurrency(baselineTotals.energy)}</div></div>
+                <div><small style="color:#64748b;">Total factura agregado</small><div style="font-weight:700;">${formatCurrency(baselineTotals.total)}</div></div>
+            </div>
+        </div>
+
+        <div class="card" style="padding:1rem; margin-bottom:0.75rem;">
+            <h4 style="margin-bottom:0.5rem;">Detalle individual actual por suministro</h4>
+            <div style="overflow-x:auto;">
+                <table class="modal-table">
+                    <thead>
+                        <tr>
+                            <th>Factura</th>
+                            <th>CUPS</th>
+                            <th>Periodo</th>
+                            <th>Consumo</th>
+                            <th>Energia actual</th>
+                            <th>Potencia actual</th>
+                            <th>Total actual</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${baselineRowsHtml || '<tr><td colspan="7">No hay suministros para mostrar.</td></tr>'}
+                        <tr style="font-weight:700; background:#f8fafc;">
+                            <td colspan="3" style="text-align:right;">Totales cliente</td>
+                            <td>${baselineTotals.consumption.toFixed(2)} kWh</td>
+                            <td>${formatCurrency(baselineTotals.energy)}</td>
+                            <td>${formatCurrency(baselineTotals.power)}</td>
+                            <td>${formatCurrency(baselineTotals.total)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        ${bestOption ? `
+        <div class="card" style="padding:1rem; margin-bottom:0.75rem; border:1px solid #dbeafe;">
+            <h4 style="margin-bottom:0.5rem;">Escenario lider (${bestOption.comm.name}) - Antes vs Despues real</h4>
+            <p style="color:#64748b; margin:0 0 0.65rem;">Este bloque agrega todos los puntos del cliente y conserva el detalle por suministro, incluyendo impacto de potencia.</p>
+            <div style="display:grid; grid-template-columns: repeat(3, minmax(160px, 1fr)); gap:0.65rem; margin-bottom:0.75rem;">
+                <div><small style="color:#64748b;">Energia antes/despues</small><div style="font-weight:700;">${formatCurrency(bestTotals.oldEnergy)} / ${formatCurrency(bestTotals.newEnergy)}</div></div>
+                <div><small style="color:#64748b;">Potencia antes/despues</small><div style="font-weight:700;">${formatCurrency(bestTotals.oldPower)} / ${formatCurrency(bestTotals.newPower)}</div></div>
+                <div><small style="color:#64748b;">Total antes/despues</small><div style="font-weight:700; color:${(bestTotals.oldTotal - bestTotals.newTotal) >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(bestTotals.oldTotal)} / ${formatCurrency(bestTotals.newTotal)}</div></div>
+            </div>
+            <div style="overflow-x:auto;">
+                <table class="modal-table">
+                    <thead>
+                        <tr>
+                            <th>Factura</th>
+                            <th>CUPS</th>
+                            <th>Energia antes</th>
+                            <th>Energia despues</th>
+                            <th>Impacto potencia</th>
+                            <th>Total antes</th>
+                            <th>Total despues</th>
+                            <th>Ahorro total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${bestRowsHtml || '<tr><td colspan="8">No hay detalle de escenario lider.</td></tr>'}
+                        <tr style="font-weight:700; background:#eef2ff;">
+                            <td colspan="5" style="text-align:right;">Totales escenario lider</td>
+                            <td>${formatCurrency(bestTotals.oldTotal)}</td>
+                            <td>${formatCurrency(bestTotals.newTotal)}</td>
+                            <td style="color:${(bestTotals.oldTotal - bestTotals.newTotal) >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(bestTotals.oldTotal - bestTotals.newTotal)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        ` : ''}
+
         <p><strong>Ranking de propuesta de ahorro</strong> (basado en energia y simulacion de total)</p>
         <div style="overflow-x: auto;">
             <table class="modal-table">
@@ -2283,7 +2833,6 @@ function closeCompareSelectorModal() {
     if (modal) modal.classList.add('hidden');
     compareCurrentInvoiceIndex = null;
     compareSelectedCommercializers = [];
-    compareBaseInvoice = null;
 }
 
 window.addEventListener('click', (event) => {
@@ -2306,6 +2855,16 @@ window.addEventListener('click', (event) => {
     }
 });
 
+window.addEventListener('click', (event) => {
+    const modal = document.getElementById('comparison-transparency-modal');
+    if (!modal || modal.classList.contains('hidden')) return;
+    if (Date.now() < modalGuardUntil.compareTransparency) return;
+    const content = modal.querySelector('.modal-content');
+    if (content && !content.contains(event.target)) {
+        closeComparisonTransparencyModal();
+    }
+});
+
 // Exponer funciones globales para onclick handlers
 window.openDetailModalFromHistory = openDetailModalFromHistory;
 window.openClientSupplyInvoice = openClientSupplyInvoice;
@@ -2313,6 +2872,8 @@ window.closeClientSupplyInvoiceModal = closeClientSupplyInvoiceModal;
 window.openCompareFromClientSupply = openCompareFromClientSupply;
 window.startCompareFromTab = startCompareFromTab;
 window.applyCommercializerProposal = applyCommercializerProposal;
+window.openComparisonTransparencyModal = openComparisonTransparencyModal;
+window.closeComparisonTransparencyModal = closeComparisonTransparencyModal;
 window.updateProposalStatus = updateProposalStatus;
 window.openCommercializerModal = openCommercializerModal;
 window.closeCommercializerModal = closeCommercializerModal;
