@@ -2136,7 +2136,7 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
         return `
             <div class="card" style="padding:1rem; margin-bottom:1rem; border:1px solid #dbeafe;">
                 <h3 style="margin-bottom:0.5rem;">Factura ${s.invoiceNum}</h3>
-                <p style="margin:0 0 0.65rem; color:#334155;"><strong>Cliente:</strong> ${s.clientName} | <strong>Suministro:</strong> ${getShortSupplyAddress(s.supplyAddress)} | <strong>CUPS:</strong> ${s.cups} | <strong>Periodo:</strong> ${formatBillingPeriod(s.period)} | <strong>Tarifa:</strong> ${s.tariffType}</p>
+                <p style="margin:0 0 0.65rem; color:#334155;"><strong>Cliente:</strong> ${s.clientName} | <strong>Suministro:</strong> ${getShortSupplyAddress(s.supplyAddress)} | <strong>Periodo:</strong> ${formatBillingPeriod(s.period)} | <strong>Tarifa:</strong> ${s.tariffType}<br><strong>CUPS:</strong> ${s.cups}</p>
 
                 <h4 style="margin:0.75rem 0 0.5rem;">1) Energia por periodos</h4>
                 <div style="overflow-x:auto; margin-bottom:0.75rem;">
