@@ -177,10 +177,9 @@ function detectTariffTypeFromText(text) {
 
 function getActivePeriodsByTariff(tariffType, energyItems = []) {
     const t = String(tariffType || '').trim();
-    if (t === '2.0') return [1, 2];
-    if (t === '3.0') return [1, 2, 3];
-    if (t === '6.1') return [1, 2, 3, 4, 5, 6];
+    if (t === '2.0') return [1, 2, 3];
 
+    // Para 3.0 y 6.1 no se inventan periodos: usar solo los detectados en factura.
     const detected = (energyItems || [])
         .filter(item => Number(item.kwh || 0) > 0)
         .map(item => Number(item.period || 0))
