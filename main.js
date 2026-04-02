@@ -2166,7 +2166,7 @@ function buildReportCoverHtml({
             <div style="display:grid; grid-template-columns: repeat(2, minmax(260px, 1fr)); gap:0.75rem; margin-bottom:1rem;">
                 <div class="card pdf-avoid-break" style="padding:0.85rem; border:1px solid #dbeafe; background:#ffffff; margin:0;">
                     <div style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.06em; color:#64748b; margin-bottom:0.45rem;">Datos del informe</div>
-                    <div><strong>Cliente:</strong> ${clientName}</div>
+                    <div><strong>Cliente:</strong> <strong style="font-size:1rem; color:#0f172a;">${clientName}</strong></div>
                     <div><strong>Tarifa:</strong> ${tariffType}</div>
                     <div><strong>Periodo analizado:</strong> ${periodLabel}</div>
                     <div><strong>${supplyCount} suministro${supplyCount !== 1 ? 's' : ''}</strong></div>
@@ -2175,7 +2175,7 @@ function buildReportCoverHtml({
                 <div class="card pdf-avoid-break" style="padding:0.85rem; border:1px solid #dbeafe; background:#ffffff; margin:0;">
                     <div style="font-size:0.78rem; text-transform:uppercase; letter-spacing:0.06em; color:#64748b; margin-bottom:0.45rem;">Propuesta comercial</div>
                     <div style="font-size:0.85rem; color:#64748b; margin-bottom:0.5rem;"><small>De: ${currentCommercializerLabel}</small></div>
-                    <div style="font-size:1.6rem; font-weight:700; color:#0f172a; margin-bottom:0.5rem;">${proposedCommercializer}</div>
+                    <div style="font-size:1rem; font-weight:700; color:#0f172a; margin-bottom:0.5rem;">${proposedCommercializer}</div>
                     <p style="margin:0; color:#475569;">Nueva oferta de precios con impacto directo en la factura.</p>
                 </div>
             </div>
