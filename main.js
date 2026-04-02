@@ -1306,41 +1306,143 @@ window.addEventListener('click', (event) => {
 // Comparacion state
 let compareCurrentInvoiceIndex = null;
 let compareSelectedCommercializers = [];
+let compareScope = 'single';
 
 function openCompareView(index) {
     const inv = invoices[index];
     if (!inv) return;
 
-    if (commercializers.length === 0) {
+    const compatible = commercializers.filter(c => !c.tariffType || c.tariffType === inv.tariffType);
+    if (compatible.length === 0) {
         alert('No hay comercializadoras configuradas. Por favor crea una en la pestaña "Comercializadoras".');
         return;
     }
 
     compareCurrentInvoiceIndex = index;
     compareSelectedCommercializers = [];
+    compareScope = 'single';
+    const scopeEl = document.getElementById('compare-scope');
+    if (scopeEl) scopeEl.value = 'single';
     renderCompareSelectorList();
     modalGuardUntil.compareSelector = Date.now() + 250;
     document.getElementById('compare-selector-modal').classList.remove('hidden');
+}
+
+function normalizeClientKey(name) {
+    return String(name || '').trim().toLowerCase();
+}
+
+function getCompareInvoices(baseInvoice) {
+    if (!baseInvoice) return [];
+    const all = [...invoices, ...dbInvoices];
+    const unique = [];
+    const seen = new Set();
+
+    all.forEach(inv => {
+        const key = `${inv.invoiceNum || 'S/N'}|${inv.fileName || ''}|${inv.period || ''}|${inv.cups || ''}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            unique.push(inv);
+        }
+    });
+
+    if (compareScope === 'client-tariff') {
+        return unique.filter(inv =>
+            normalizeClientKey(inv.clientName) === normalizeClientKey(baseInvoice.clientName) &&
+            String(inv.tariffType || 'N/D') === String(baseInvoice.tariffType || 'N/D')
+        );
+    }
+
+    return [baseInvoice];
+}
+
+function computeComparisonMetrics(compareInvoices, comm) {
+    let totalConsumption = 0;
+    let oldEnergyCost = 0;
+    let newEnergyCost = 0;
+    let oldTotalInvoice = 0;
+    let newTotalInvoiceSim = 0;
+    const invoiceRows = [];
+
+    compareInvoices.forEach(inv => {
+        const allowedPeriods = getActivePeriodsByTariff(inv.tariffType, inv.energyPeriodItems || []);
+        const energyItems = (inv.energyPeriodItems || []).filter(item => allowedPeriods.includes(Number(item.period)));
+
+        const consumption = energyItems.reduce((sum, item) => sum + Number(item.kwh || 0), 0);
+        const oldEnergy = energyItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0);
+        const proposedEnergy = energyItems.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(comm.energyPrices?.[item.period] || 0)), 0);
+        const baseTotal = Number(inv.totalCalculated || 0);
+        const invEnergyReference = Number(inv.energyCost || 0) > 0 ? Number(inv.energyCost || 0) : oldEnergy;
+        const simulatedTotal = baseTotal - invEnergyReference + proposedEnergy;
+
+        totalConsumption += consumption;
+        oldEnergyCost += oldEnergy;
+        newEnergyCost += proposedEnergy;
+        oldTotalInvoice += baseTotal;
+        newTotalInvoiceSim += simulatedTotal;
+
+        invoiceRows.push({
+            invoiceNum: inv.invoiceNum || 'S/N',
+            cups: inv.cups || 'N/D',
+            period: inv.period || 'N/D',
+            consumption,
+            oldEnergy,
+            proposedEnergy,
+            energySaving: oldEnergy - proposedEnergy,
+            oldTotal: baseTotal,
+            simulatedTotal
+        });
+    });
+
+    const oldAvgPrice = totalConsumption > 0 ? oldEnergyCost / totalConsumption : 0;
+    const newAvgPrice = totalConsumption > 0 ? newEnergyCost / totalConsumption : 0;
+    const energySaving = oldEnergyCost - newEnergyCost;
+    const totalSaving = oldTotalInvoice - newTotalInvoiceSim;
+
+    return {
+        totalConsumption,
+        oldEnergyCost,
+        newEnergyCost,
+        oldAvgPrice,
+        newAvgPrice,
+        energySaving,
+        oldTotalInvoice,
+        newTotalInvoiceSim,
+        totalSaving,
+        invoiceRows
+    };
 }
 
 function renderCompareSelectorList() {
     const list = document.getElementById('compare-selector-list');
     if (!list) return;
 
-    const html = commercializers.map((c, idx) => {
-        const pricesPreview = [1, 2, 3, 4, 5, 6].map(p => `P${p}: ${(c.energyPrices[p] || 0).toFixed(4)}`).join(' | ');
+    const baseInv = invoices[compareCurrentInvoiceIndex];
+    if (!baseInv) {
+        list.innerHTML = '<p style="color:#999;">No hay factura base para comparar.</p>';
+        return;
+    }
+
+    const compatibleCommercializers = commercializers
+        .map((c, idx) => ({ c, idx }))
+        .filter(item => !item.c.tariffType || item.c.tariffType === baseInv.tariffType);
+
+    const html = compatibleCommercializers.map(({ c, idx }) => {
+        const pricesPreview = getConfiguredEnergyPeriodsByTariff(c.tariffType || baseInv.tariffType || '2.0')
+            .map(p => `P${p}: ${(c.energyPrices[p] || 0).toFixed(4)}`)
+            .join(' | ');
         return `
             <div style="display: flex; align-items: center; gap: 1rem; padding: 0.75rem; border: 1px solid #e5e7eb; border-radius: 4px; margin-bottom: 0.5rem;">
                 <input type="checkbox" id="compare-check-${idx}" value="${idx}" style="width: 18px; height: 18px; cursor: pointer;">
                 <div style="flex: 1;">
-                    <strong>${c.name}</strong>
+                    <strong>${c.name}</strong> <small style="color:#64748b;">(Tarifa ${c.tariffType || baseInv.tariffType || 'N/D'})</small>
                     <div style="font-size: 0.85rem; color: #666; margin-top: 0.25rem;">€/kWh: ${pricesPreview}</div>
                 </div>
             </div>
         `;
     }).join('');
 
-    list.innerHTML = html || '<p style="color: #999;">No hay comercializadoras disponibles</p>';
+    list.innerHTML = html || '<p style="color: #999;">No hay comercializadoras compatibles con la tarifa de esta factura.</p>';
 }
 
 function doSingleComparison() {
@@ -1360,6 +1462,9 @@ function doSingleComparison() {
         return;
     }
 
+    const scopeEl = document.getElementById('compare-scope');
+    compareScope = scopeEl ? scopeEl.value : 'single';
+
     closeCompareSelectorModal();
     renderSingleComparison(compareCurrentInvoiceIndex, selected[0]);
 }
@@ -1376,6 +1481,9 @@ function doMultipleComparison() {
         return;
     }
 
+    const scopeEl = document.getElementById('compare-scope');
+    compareScope = scopeEl ? scopeEl.value : 'single';
+
     closeCompareSelectorModal();
     renderMultipleComparison(compareCurrentInvoiceIndex, selected);
 }
@@ -1388,41 +1496,45 @@ function renderSingleComparison(invoiceIdx, commercializerIdx) {
     const compareSection = document.getElementById('comparison-results');
     if (!compareSection) return;
 
-    const allowedPeriods = getActivePeriodsByTariff(inv.tariffType, inv.energyPeriodItems || []);
-    const currentEnergy = (inv.energyPeriodItems || []).filter(item => allowedPeriods.includes(Number(item.period)));
-    const periodRows = currentEnergy.map(item => {
-        const period = item.period;
-        const currentPrice = Number(item.unitPriceKwh || 0);
-        const commPrice = Number(comm.energyPrices[period] || 0);
-        const diff = commPrice - currentPrice;
-        const diffSign = diff > 0 ? '+' : '';
-        const diffColor = diff > 0 ? '#dc2626' : diff < 0 ? '#059669' : '#666';
-        return `<tr>
-            <td>P${period}</td>
-            <td>${item.kwh.toFixed(2)} kWh</td>
-            <td>${currentPrice.toFixed(6)} €/kWh</td>
-            <td>${commPrice.toFixed(6)} €/kWh</td>
-            <td style="color: ${diffColor}; font-weight: 600;">${diffSign}${diff.toFixed(6)} €/kWh</td>
-        </tr>`;
-    }).join('');
+    const compareInvoices = getCompareInvoices(inv);
+    const metrics = computeComparisonMetrics(compareInvoices, comm);
+    const scopeLabel = compareScope === 'client-tariff'
+        ? `Multi-suministro (${inv.clientName || 'Cliente'} | Tarifa ${inv.tariffType || 'N/D'})`
+        : 'Suministro individual';
 
-    const currentCost = currentEnergy.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0);
-    const commCost = currentEnergy.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(comm.energyPrices[item.period] || 0)), 0);
-    const totalDiff = commCost - currentCost;
-    const totalDiffSign = totalDiff > 0 ? '+' : '';
-    const totalDiffColor = totalDiff > 0 ? '#dc2626' : totalDiff < 0 ? '#059669' : '#666';
+    const rowsHtml = metrics.invoiceRows.map(r => `
+        <tr>
+            <td>${r.invoiceNum}</td>
+            <td>${r.cups}</td>
+            <td>${r.period}</td>
+            <td>${r.consumption.toFixed(2)} kWh</td>
+            <td>${formatCurrency(r.oldEnergy)}</td>
+            <td>${formatCurrency(r.proposedEnergy)}</td>
+            <td style="font-weight:600; color:${r.energySaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(r.energySaving)}</td>
+            <td>${formatCurrency(r.oldTotal)}</td>
+            <td>${formatCurrency(r.simulatedTotal)}</td>
+        </tr>
+    `).join('');
 
     const html = `
-        <h3>Comparativa Individual: ${inv.invoiceNum || 'S/N'}</h3>
-        <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Factura:</strong> ${inv.comercializadora || 'N/D'} | <strong>Tarifa:</strong> ${inv.tariffType || 'N/D'} | <strong>Comparar con:</strong> ${comm.name}</p>
-        <p><strong>Análisis de energía (€/kWh por periodo)</strong></p>
-        <table class="modal-table">
-            <thead><tr><th>Periodo</th><th>Consumo</th><th>Precio factura</th><th>Precio ${comm.name}</th><th>Diferencia</th></tr></thead>
-            <tbody>
-                ${periodRows || '<tr><td colspan="5">No hay periodos</td></tr>'}
-                <tr class="mirror-row-total"><td colspan="2">Coste Total Energía</td><td>${formatCurrency(currentCost)}</td><td>${formatCurrency(commCost)}</td><td style="color: ${totalDiffColor}; font-weight: 600;">${totalDiffSign}${formatCurrency(totalDiff)}</td></tr>
-            </tbody>
-        </table>
+        <h3>Comparativa con ${comm.name}</h3>
+        <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Tarifa:</strong> ${inv.tariffType || 'N/D'} | <strong>Alcance:</strong> ${scopeLabel}</p>
+        <div style="display:grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap:0.75rem; margin:0.75rem 0 1rem;">
+            <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Precio energia actual</div><div style="font-size:1.1rem; font-weight:700;">${metrics.oldAvgPrice.toFixed(6)} €/kWh</div></div>
+            <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Precio energia propuesta</div><div style="font-size:1.1rem; font-weight:700;">${metrics.newAvgPrice.toFixed(6)} €/kWh</div></div>
+            <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Ahorro energia</div><div style="font-size:1.1rem; font-weight:700; color:${metrics.energySaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(metrics.energySaving)}</div></div>
+            <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Factura simulada</div><div style="font-size:1.1rem; font-weight:700;">${formatCurrency(metrics.newTotalInvoiceSim)}</div></div>
+        </div>
+        <p style="color:#64748b; margin:0 0 0.75rem;">La potencia se mantiene en la simulacion; el cambio aplicado es sobre energia para estimar ahorro.</p>
+        <div style="overflow-x:auto;">
+            <table class="modal-table">
+                <thead><tr><th>Factura</th><th>CUPS</th><th>Periodo factura</th><th>Consumo</th><th>Energia antes</th><th>Energia despues</th><th>Ahorro energia</th><th>Total antes</th><th>Total simulado</th></tr></thead>
+                <tbody>
+                    ${rowsHtml || '<tr><td colspan="9">No hay datos de energia para comparar.</td></tr>'}
+                    <tr class="mirror-row-total"><td colspan="4" style="text-align:right;">Totales</td><td>${formatCurrency(metrics.oldEnergyCost)}</td><td>${formatCurrency(metrics.newEnergyCost)}</td><td style="font-weight:700; color:${metrics.energySaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(metrics.energySaving)}</td><td>${formatCurrency(metrics.oldTotalInvoice)}</td><td>${formatCurrency(metrics.newTotalInvoiceSim)}</td></tr>
+                </tbody>
+            </table>
+        </div>
     `;
 
     compareSection.innerHTML = html;
@@ -1436,63 +1548,54 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
     const compareSection = document.getElementById('comparison-results');
     if (!compareSection) return;
 
-    const allowedPeriods = getActivePeriodsByTariff(inv.tariffType, inv.energyPeriodItems || []);
-    const currentEnergy = (inv.energyPeriodItems || []).filter(item => allowedPeriods.includes(Number(item.period)));
+    const compareInvoices = getCompareInvoices(inv);
+    const scopeLabel = compareScope === 'client-tariff'
+        ? `Multi-suministro (${inv.clientName || 'Cliente'} | Tarifa ${inv.tariffType || 'N/D'})`
+        : 'Suministro individual';
+    const comms = commercializerIndices.map(idx => commercializers[idx]).filter(Boolean);
 
-    // Construir tabla con columnas para cada comercializadora
-    const comms = commercializerIndices.map(idx => commercializers[idx]);
-    const headerCells = comms.map(c => `<th>${c.name}</th>`).join('');
-    const periodRows = currentEnergy.map(item => {
-        const period = item.period;
-        const currentPrice = Number(item.unitPriceKwh || 0);
-        const commCells = comms.map(c => {
-            const commPrice = Number(c.energyPrices[period] || 0);
-            const diff = commPrice - currentPrice;
-            const diffSign = diff > 0 ? '+' : '';
-            const diffColor = diff > 0 ? '#dc2626' : diff < 0 ? '#059669' : '#999';
-            return `<td style="color: ${diffColor};"><strong>${commPrice.toFixed(6)}</strong><br><small>${diffSign}${diff.toFixed(6)}</small></td>`;
-        }).join('');
-        return `<tr>
-            <td>P${period}</td>
-            <td>${item.kwh.toFixed(2)} kWh</td>
-            <td><strong style="font-size: 1.05rem;">${currentPrice.toFixed(6)}</strong></td>
-            ${commCells}
-        </tr>`;
-    }).join('');
+    const rankingRows = comms.map(c => {
+        const m = computeComparisonMetrics(compareInvoices, c);
+        return { comm: c, metrics: m };
+    }).sort((a, b) => b.metrics.energySaving - a.metrics.energySaving);
 
-    // Fila de totales
-    const currentCost = currentEnergy.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0);
-    const commTotalCells = comms.map(c => {
-        const commCost = currentEnergy.reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(c.energyPrices[item.period] || 0)), 0);
-        const totalDiff = commCost - currentCost;
-        const totalDiffSign = totalDiff > 0 ? '+' : '';
-        const totalDiffColor = totalDiff > 0 ? '#dc2626' : totalDiff < 0 ? '#059669' : '#999';
-        return `<td style="font-weight: 700; color: ${totalDiffColor}; background: #f0fdf4;">${formatCurrency(commCost)}<br><small>${totalDiffSign}${formatCurrency(totalDiff)}</small></td>`;
-    }).join('');
+    const rowsHtml = rankingRows.map(({ comm, metrics }) => `
+        <tr>
+            <td><strong>${comm.name}</strong></td>
+            <td>${(comm.tariffType || inv.tariffType || 'N/D')}</td>
+            <td>${metrics.oldAvgPrice.toFixed(6)} €/kWh</td>
+            <td>${metrics.newAvgPrice.toFixed(6)} €/kWh</td>
+            <td style="font-weight:700; color:${metrics.energySaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(metrics.energySaving)}</td>
+            <td>${formatCurrency(metrics.oldTotalInvoice)}</td>
+            <td>${formatCurrency(metrics.newTotalInvoiceSim)}</td>
+            <td style="font-weight:700; color:${metrics.totalSaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(metrics.totalSaving)}</td>
+        </tr>
+    `).join('');
 
     const html = `
-        <h3>Comparativa Múltiple: ${inv.invoiceNum || 'S/N'}</h3>
-        <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Tarifa:</strong> ${inv.tariffType || 'N/D'} | <strong>Consumo:</strong> ${inv.consumption?.toFixed(2) || 0} kWh</p>
-        <p><strong>Comparativa de precios de energía</strong> (€/kWh por periodo)</p>
+        <h3>Comparativa Multiple de Comercializadoras</h3>
+        <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Tarifa:</strong> ${inv.tariffType || 'N/D'} | <strong>Alcance:</strong> ${scopeLabel}</p>
+        <p><strong>Ranking de propuesta de ahorro</strong> (basado en energia y simulacion de total)</p>
         <div style="overflow-x: auto;">
             <table class="modal-table">
                 <thead>
                     <tr>
-                        <th>Periodo</th>
-                        <th>Consumo</th>
-                        <th>Factura Actual</th>
-                        ${headerCells}
+                        <th>Comercializadora</th>
+                        <th>Tarifa</th>
+                        <th>Precio actual</th>
+                        <th>Precio propuesto</th>
+                        <th>Ahorro energia</th>
+                        <th>Total antes</th>
+                        <th>Total simulado</th>
+                        <th>Ahorro total</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${periodRows}
-                    <tr class="mirror-row-total">
-                        <td colspan="3" style="text-align: right;">Coste Total</td>
-                        ${commTotalCells}
-                    </tr>
+                    ${rowsHtml || '<tr><td colspan="8">No hay datos para comparar.</td></tr>'}
                 </tbody>
             </table>
         </div>
+        <p style="color:#64748b; margin-top:0.75rem;">La potencia no se destaca en las cards; la propuesta centra el ahorro en energia y su impacto en factura simulada.</p>
     `;
 
     compareSection.innerHTML = html;

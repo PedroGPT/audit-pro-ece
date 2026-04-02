@@ -217,6 +217,13 @@
             <button class="modal-close" onclick="closeCompareSelectorModal()">×</button>
             <h2>Seleccionar Comercializadoras para Comparar</h2>
             <div style="margin-top: 1.5rem;">
+                <div style="margin-bottom:1rem;">
+                    <label>Alcance de comparativa:</label>
+                    <select id="compare-scope" style="width:100%; padding:0.55rem; border:1px solid #d1d5db; border-radius:6px;">
+                        <option value="single">Individual (factura/suministro actual)</option>
+                        <option value="client-tariff">Multi-suministro (mismo cliente y misma tarifa)</option>
+                    </select>
+                </div>
                 <div id="compare-selector-list" style="margin-bottom: 1.5rem;"></div>
                 <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
                     <button class="btn secondary" onclick="closeCompareSelectorModal()">Cancelar</button>
