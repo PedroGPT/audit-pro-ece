@@ -629,6 +629,39 @@ function areDuplicatedEnergyAndTolls(energyItems = [], tollItems = []) {
     return compared > 0 && duplicated === compared;
 }
 
+function calculateEnergyWithTollsTotal(energyItems = [], tollItems = []) {
+    const energy = (energyItems || []).filter(item => Number(item.period) >= 1 && Number(item.kwh || 0) > 0);
+    return energy.reduce((sum, item) => {
+        const energyAmount = Number(item.kwh || 0) * Number(item.unitPriceKwh || 0);
+        const toll = (tollItems || []).find(t => Number(t.period) === Number(item.period));
+        const tollAmount = Number(item.kwh || 0) * Number(toll?.unitPriceKwh || 0);
+        return sum + energyAmount + tollAmount;
+    }, 0);
+}
+
+function shouldPreferRegexTolls(inv, regexTolls = []) {
+    if (!regexTolls.length) return false;
+
+    const energyItems = inv.energyPeriodItems || [];
+    const currentTolls = inv.tollPeriodItems || [];
+    if (!energyItems.length || !currentTolls.length) return false;
+
+    if (areDuplicatedEnergyAndTolls(energyItems, currentTolls)) return true;
+
+    const energyRef = Number(inv.energyCost || inv.breakdown?.energyCost || 0);
+    if (energyRef <= 0) return false;
+
+    const currentTotal = calculateEnergyWithTollsTotal(energyItems, currentTolls);
+    const regexTotal = calculateEnergyWithTollsTotal(energyItems, regexTolls);
+    const currentDiff = Math.abs(currentTotal - energyRef);
+    const regexDiff = Math.abs(regexTotal - energyRef);
+
+    const currentBlowsUpEnergy = currentTotal > (energyRef + 0.5);
+    const regexIsClearlyBetter = regexDiff + 0.5 < currentDiff;
+
+    return currentBlowsUpEnergy && regexIsClearlyBetter;
+}
+
 function sanitizeInvoiceForStorage(inv) {
     if (!inv || typeof inv !== 'object') return inv;
     const clone = { ...inv };
@@ -822,9 +855,9 @@ async function runExtractionIA(text, fileName) {
             inv.tollPeriodItems = tollFromIA;
             inv._tollPeriodsSource = 'openai';
 
-            if (areDuplicatedEnergyAndTolls(inv.energyPeriodItems, inv.tollPeriodItems) && regexTolls.length > 0) {
+            if (shouldPreferRegexTolls(inv, regexTolls)) {
                 inv.tollPeriodItems = regexTolls;
-                inv._tollPeriodsSource = 'regex-fallback-duplicated-openai';
+                inv._tollPeriodsSource = 'regex-fallback-suspicious-openai';
             }
         } else {
             inv.tollPeriodItems = regexTolls;
