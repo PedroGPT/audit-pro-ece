@@ -218,8 +218,17 @@ async function getInvoicePdfFile(inv) {
     const storedFile = await loadInvoicePdfFromStore(inv);
     if (storedFile) {
         cachePendingPdf(inv, storedFile);
+        return storedFile;
     }
-    return storedFile;
+
+    // Último recurso: Supabase Storage
+    const cloudFile = await cloudLoadPdf(inv);
+    if (cloudFile) {
+        await saveInvoicePdfToStore(inv, cloudFile);
+        return cloudFile;
+    }
+
+    return null;
 }
 
 // ========================================================================
@@ -274,6 +283,7 @@ async function initApp() {
         console.log("Supabase Cloud Sync: CONNECTED ✓");
     }
     loadLocalStore();
+    await cloudLoadInvoices();
 }
 
 function switchView(viewId) {
@@ -770,6 +780,17 @@ function sanitizeInvoiceForStorage(inv) {
     return clone;
 }
 
+function sanitizeInvoiceForCloud(inv) {
+    const s = sanitizeInvoiceForStorage(inv);
+    // Eliminar campos voluminosos o de diagnóstico que no aportan valor en cloud
+    delete s._rawOpenAIJSON;
+    delete s._impliedTollsFromEnergy;
+    delete s._tollOpenAIItems;
+    delete s._tollRegexItems;
+    delete s._tollResidualItems;
+    return s;
+}
+
 // ========================================================================
 // 5. MOTOR DE PROCESAMIENTO DE ARCHIVOS (AUDITORÍA IA CON OPENAI)
 // ========================================================================
@@ -848,6 +869,7 @@ async function processFiles(files) {
             // Solo sincronizar cloud si cumple la regla de peajes obligatorios
             if (hasMandatoryTolls) {
                 await cloudSync(auditData);
+                        await cloudSyncPdf(auditData, file);
             }
         } catch (e) {
             console.error(`[Fatal] Error crítico en archivo ${file.name}:`, e);
@@ -1276,6 +1298,84 @@ async function cloudSync(invoice) {
     } catch (e) {
         console.warn("[Cloud] Error sync:", e.message);
     }
+}
+
+async function cloudSync(invoice) {
+    if (!supabaseClient) return;
+    try {
+        const clean = sanitizeInvoiceForCloud(invoice);
+        const fileName = String(clean.fileName || clean.invoiceNum || 'S/N');
+        const { error } = await supabaseClient.from('invoices').upsert([{
+            file_name: fileName,
+            invoice_num: String(clean.invoiceNum || 'S/N'),
+            cups: String(clean.cups || ''),
+            period: String(clean.period || ''),
+            client_name: String(clean.clientName || ''),
+            data: clean
+        }], { onConflict: 'file_name' });
+        if (error) throw error;
+        console.log("[Cloud] Sincronizado:", fileName);
+    } catch (e) {
+        console.warn("[Cloud] Error sync:", e.message);
+    }
+}
+
+async function cloudLoadInvoices() {
+    if (!supabaseClient) return;
+    try {
+        const { data, error } = await supabaseClient
+            .from('invoices')
+            .select('data')
+            .order('created_at', { ascending: false });
+        if (error) throw error;
+        if (data && data.length > 0) {
+            const cloudInvoices = data.map(row => row.data).filter(Boolean).map(sanitizeInvoiceForStorage);
+            const existingKeys = new Set(dbInvoices.map(i => String(i.fileName || i.invoiceNum || '')));
+            const newFromCloud = cloudInvoices.filter(i => !existingKeys.has(String(i.fileName || i.invoiceNum || '')));
+            if (newFromCloud.length > 0) {
+                dbInvoices = [...dbInvoices, ...newFromCloud];
+                localStorage.setItem('audit_pro_db', JSON.stringify(dbInvoices));
+                renderHistory();
+                renderClients();
+            }
+            console.log("[Cloud] Cargados:", cloudInvoices.length, "registros,", newFromCloud.length, "nuevos");
+        }
+    } catch (e) {
+        console.warn("[Cloud] Error load:", e.message);
+    }
+}
+
+async function cloudSyncPdf(inv, file) {
+    if (!supabaseClient || !file) return;
+    try {
+        const fileName = String(inv.fileName || file.name || 'factura.pdf');
+        const { error } = await supabaseClient.storage
+            .from('invoice-pdfs')
+            .upload(fileName, file, { upsert: true, contentType: 'application/pdf' });
+        if (error) throw error;
+        console.log("[CloudPDF] Subido:", fileName);
+    } catch (e) {
+        console.warn("[CloudPDF] Error upload:", e.message);
+    }
+}
+
+async function cloudLoadPdf(inv) {
+    if (!supabaseClient) return null;
+    try {
+        const fileName = String(inv.fileName || inv.invoiceNum || 'factura.pdf');
+        const { data, error } = await supabaseClient.storage
+            .from('invoice-pdfs')
+            .download(fileName);
+        if (error) throw error;
+        if (data) {
+            const file = new File([data], fileName, { type: 'application/pdf' });
+            cachePendingPdf(inv, file);
+            return file;
+        }
+    } catch (e) {
+        console.warn("[CloudPDF] Error download:", e.message);
+    }
+    return null;
 }
 
 function loadLocalStore() {

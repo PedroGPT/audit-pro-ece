@@ -1,3 +1,12 @@
 {
-  "version": 2
+  "version": 2,
+  "buildCommand": "",
+  "outputDirectory": ".",
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/$1" },
+    { "src": "/style.css(.*)", "dest": "/style.css$1" },
+    { "src": "/main.js(.*)", "dest": "/main.js$1" },
+    { "src": "/(.*\\.pdf)", "dest": "/$1" },
+    { "src": "/(.*)", "dest": "/index.html" }
+  ]
 }
