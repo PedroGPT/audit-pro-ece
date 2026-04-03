@@ -1468,6 +1468,10 @@ function formatCurrency(a) {
     return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(a || 0); 
 }
 
+function formatDecimal(value, digits = 6) {
+    return Number(value || 0).toFixed(digits);
+}
+
 function formatBillingPeriod(periodText) {
     const raw = String(periodText || '').trim();
     if (!raw || raw === 'N/D') return 'N/D';
@@ -1640,11 +1644,52 @@ function openClientSupplyAuditModal(rowIndex) {
         </tr>
     `).join('');
 
+    const activePeriods = getActivePeriodsByTariff(inv.tariffType, inv.energyPeriodItems || []);
+    const sourceRows = [
+        ['Fuente energía por periodos', inv._energyPeriodsSource || 'N/D'],
+        ['Fuente peajes/cargos', inv._tollPeriodsSource || 'N/D'],
+        ['Fuente potencia por periodos', inv._powerPeriodsSource || 'N/D'],
+        ['Ajuste manual aplicado', inv._manualPeriodOverrides ? 'Sí' : 'No'],
+        ['Última corrección manual', inv._manualEditedAt ? new Date(inv._manualEditedAt).toLocaleString('es-ES') : 'N/D']
+    ].map(([label, value]) => `
+        <tr>
+            <td>${label}</td>
+            <td>${value}</td>
+        </tr>
+    `).join('');
+
+    const periodEditorRows = activePeriods.map(period => {
+        const energy = (inv.energyPeriodItems || []).find(item => Number(item.period) === Number(period)) || { kwh: 0, unitPriceKwh: 0 };
+        const toll = (inv.tollPeriodItems || []).find(item => Number(item.period) === Number(period)) || { unitPriceKwh: 0 };
+        return `
+            <tr>
+                <td>P${period}</td>
+                <td><input type="number" id="audit-kwh-${rowIndex}-${period}" value="${formatDecimal(energy.kwh, 3)}" step="0.001" style="width:100%; padding:0.4rem; border:1px solid #cbd5e1; border-radius:6px;"></td>
+                <td><input type="number" id="audit-energy-${rowIndex}-${period}" value="${formatDecimal(energy.unitPriceKwh, 6)}" step="0.000001" style="width:100%; padding:0.4rem; border:1px solid #cbd5e1; border-radius:6px;"></td>
+                <td><input type="number" id="audit-toll-${rowIndex}-${period}" value="${formatDecimal(toll.unitPriceKwh, 6)}" step="0.000001" style="width:100%; padding:0.4rem; border:1px solid #cbd5e1; border-radius:6px;"></td>
+            </tr>
+        `;
+    }).join('');
+
     body.innerHTML = `
         <div class="card" style="padding:0.85rem; margin-bottom:0.75rem; background:${audit.isOk ? '#ecfdf5' : '#fff7ed'}; border:1px solid ${audit.isOk ? '#bbf7d0' : '#fed7aa'};">
             <div><strong>Resultado de cuadre:</strong> ${audit.isOk ? 'CUADRADA' : 'REVISAR'}</div>
             <div><strong>Factura:</strong> ${inv.invoiceNum || 'S/N'} | <strong>CUPS:</strong> ${inv.cups || 'N/D'} | <strong>Tarifa:</strong> ${inv.tariffType || 'N/D'}</div>
             <div style="margin-top:0.35rem; color:#475569;">Tolerancia aplicada: ${formatCurrency(audit.tolerance)}</div>
+        </div>
+
+        <div class="card" style="padding:0.85rem; margin-bottom:0.75rem; border:1px solid #dbeafe; background:#f8fbff;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:0.5rem;">
+                <h3 style="margin:0;">Trazabilidad de la extracción</h3>
+                <button class="btn secondary btn-sm" onclick="toggleAuditCorrections(${rowIndex})">Mostrar / ocultar corrección manual</button>
+            </div>
+            <div style="overflow-x:auto;">
+                <table class="modal-table">
+                    <thead><tr><th>Dato</th><th>Valor</th></tr></thead>
+                    <tbody>${sourceRows}</tbody>
+                </table>
+            </div>
+            <p style="margin:0.65rem 0 0; color:#475569;">Si aquí ves una fuente incorrecta o el cuadre falla, puedes corregir los periodos y guardar la versión manual para usarla después en comparativas.</p>
         </div>
 
         <div class="card" style="padding:0.85rem; margin-bottom:0.75rem;">
@@ -1656,6 +1701,23 @@ function openClientSupplyAuditModal(rowIndex) {
                     </thead>
                     <tbody>${checkRows}</tbody>
                 </table>
+            </div>
+        </div>
+
+        <div id="audit-corrections-${rowIndex}" class="card hidden" style="padding:0.85rem; margin-bottom:0.75rem; border:1px solid #fcd34d; background:#fffbeb;">
+            <h3 style="margin-bottom:0.5rem;">Corrección manual para futuras comparativas</h3>
+            <p style="margin:0 0 0.75rem; color:#475569;">Edita kWh, precio de energía y precio de peajes/cargos por periodo. Al guardar, esta factura quedará corregida y se usará así en comparativas y auditorías posteriores.</p>
+            <div style="overflow-x:auto; margin-bottom:0.75rem;">
+                <table class="modal-table">
+                    <thead>
+                        <tr><th>Periodo</th><th>kWh</th><th>Energía €/kWh</th><th>Peajes €/kWh</th></tr>
+                    </thead>
+                    <tbody>${periodEditorRows || '<tr><td colspan="4">No hay periodos activos detectados para esta factura.</td></tr>'}</tbody>
+                </table>
+            </div>
+            <div style="display:flex; gap:0.6rem; flex-wrap:wrap;">
+                <button class="btn primary btn-sm" onclick="saveAuditCorrections(${rowIndex})">Guardar corrección</button>
+                <button class="btn secondary btn-sm" onclick="openClientSupplyAuditModal(${rowIndex})">Restaurar valores mostrados</button>
             </div>
         </div>
 
@@ -1681,6 +1743,93 @@ function openClientSupplyAuditModal(rowIndex) {
 
     modalGuardUntil.clientAudit = Date.now() + 250;
     modal.classList.remove('hidden');
+}
+
+function toggleAuditCorrections(rowIndex) {
+    const panel = document.getElementById(`audit-corrections-${rowIndex}`);
+    if (!panel) return;
+    panel.classList.toggle('hidden');
+}
+
+function persistCorrectedInvoice(updatedInvoice) {
+    const storageKey = getInvoiceStorageKey(updatedInvoice);
+    const dbPayload = sanitizeInvoiceForStorage(updatedInvoice);
+    let foundInDb = false;
+
+    dbInvoices.forEach(inv => {
+        if (getInvoiceStorageKey(inv) === storageKey) {
+            Object.assign(inv, JSON.parse(JSON.stringify(dbPayload)));
+            foundInDb = true;
+        }
+    });
+
+    if (!foundInDb) {
+        dbInvoices.unshift(JSON.parse(JSON.stringify(dbPayload)));
+    }
+
+    invoices.forEach(inv => {
+        if (getInvoiceStorageKey(inv) === storageKey) {
+            Object.assign(inv, JSON.parse(JSON.stringify(updatedInvoice)));
+        }
+    });
+
+    if (compareBaseInvoice && getInvoiceStorageKey(compareBaseInvoice) === storageKey) {
+        Object.assign(compareBaseInvoice, JSON.parse(JSON.stringify(updatedInvoice)));
+    }
+
+    localStorage.setItem('audit_pro_db', JSON.stringify(dbInvoices));
+    renderHistory();
+    renderClients();
+}
+
+function saveAuditCorrections(rowIndex) {
+    const row = clientSupplyRows[rowIndex];
+    if (!row || !row.invoice) return;
+
+    const inv = row.invoice;
+    const activePeriods = getActivePeriodsByTariff(inv.tariffType, inv.energyPeriodItems || []);
+    if (activePeriods.length === 0) {
+        alert('No hay periodos detectados para corregir.');
+        return;
+    }
+
+    const correctedEnergyItems = [];
+    const correctedTollItems = [];
+
+    for (const period of activePeriods) {
+        const kwh = Number(document.getElementById(`audit-kwh-${rowIndex}-${period}`)?.value || 0);
+        const energyPrice = Number(document.getElementById(`audit-energy-${rowIndex}-${period}`)?.value || 0);
+        const tollPrice = Number(document.getElementById(`audit-toll-${rowIndex}-${period}`)?.value || 0);
+
+        if (kwh > 0 && energyPrice > 0) {
+            correctedEnergyItems.push({ period, kwh, unitPriceKwh: energyPrice });
+        }
+        if (kwh > 0 && tollPrice >= 0) {
+            correctedTollItems.push({ period, kwh, unitPriceKwh: tollPrice });
+        }
+    }
+
+    if (correctedEnergyItems.length === 0) {
+        alert('Debes indicar al menos un periodo con kWh y precio de energía válidos.');
+        return;
+    }
+
+    inv.energyPeriodItems = correctedEnergyItems;
+    inv.tollPeriodItems = correctedTollItems;
+    inv.consumptionItems = [0, 0, 0, 0, 0, 0];
+    correctedEnergyItems.forEach(item => {
+        inv.consumptionItems[item.period - 1] = Number(item.kwh || 0);
+    });
+    inv.consumption = correctedEnergyItems.reduce((sum, item) => sum + Number(item.kwh || 0), 0);
+    inv._energyPeriodsSource = 'manual';
+    inv._tollPeriodsSource = 'manual';
+    inv._manualPeriodOverrides = true;
+    inv._manualEditedAt = new Date().toISOString();
+
+    normalizeEnergyAndTolls(inv);
+    validateMandatoryTolls(inv);
+    persistCorrectedInvoice(inv);
+    openClientSupplyAuditModal(rowIndex);
 }
 
 function closeClientSupplyAuditModal() {
@@ -3879,6 +4028,8 @@ window.openDetailModalFromHistory = openDetailModalFromHistory;
 window.openClientSupplyInvoice = openClientSupplyInvoice;
 window.openClientSupplyPdfOriginal = openClientSupplyPdfOriginal;
 window.openClientSupplyAuditModal = openClientSupplyAuditModal;
+window.toggleAuditCorrections = toggleAuditCorrections;
+window.saveAuditCorrections = saveAuditCorrections;
 window.closeClientSupplyAuditModal = closeClientSupplyAuditModal;
 window.closeClientSupplyInvoiceModal = closeClientSupplyInvoiceModal;
 window.openCompareFromClientSupply = openCompareFromClientSupply;
