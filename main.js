@@ -709,7 +709,9 @@ function buildResidualTollPeriodItems(inv) {
     if (residualTotal <= 0 || totalKwh <= 0) return [];
 
     const unitPriceKwh = residualTotal / totalKwh;
-    if (unitPriceKwh <= 0) return [];
+    // Si el precio residual es irreal (<0.002 €/kWh ~0.2 ct) los precios de energía de OpenAI
+    // ya incluían los peajes → no usar residual, devolver vacío
+    if (unitPriceKwh < 0.002) return [];
 
     return energyItems.map(item => ({
         period: Number(item.period),
@@ -901,7 +903,9 @@ async function runExtractionIA(text, fileName) {
         
         const data = await response.json();
         let content = data.choices ? data.choices[0].message.content : data;
+        const rawOpenAIContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
         let inv = typeof content === 'string' ? JSON.parse(content.replace(/```json\n?|```/g, '').trim()) : content;
+        inv._rawOpenAIJSON = rawOpenAIContent;
 
         // Completar campos adicionales del JSON IA
         inv.invoiceNum = inv.invoiceNum || inv.factura || inv.invoice || 'S/N';
@@ -1744,6 +1748,18 @@ function openClientSupplyAuditModal(rowIndex) {
             </div>
             <p style="margin:0.65rem 0 0; color:#475569;">Si aquí ves una fuente incorrecta o el cuadre falla, puedes corregir los periodos y guardar la versión manual para usarla después en comparativas.</p>
         </div>
+
+        ${inv._rawOpenAIJSON ? `
+        <div class="card" style="padding:0.85rem; margin-bottom:0.75rem; border:1px solid #e2e8f0; background:#f8fafc;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:0.5rem;">
+                <h3 style="margin:0;">JSON crudo de OpenAI</h3>
+                <button class="btn secondary btn-sm" onclick="document.getElementById('raw-openai-json-${rowIndex}').classList.toggle('hidden')">Mostrar / ocultar</button>
+            </div>
+            <div id="raw-openai-json-${rowIndex}" class="hidden">
+                <pre style="background:#1e293b; color:#e2e8f0; padding:0.85rem; border-radius:8px; overflow-x:auto; white-space:pre-wrap; font-size:0.78rem; max-height:400px; overflow-y:auto;">${inv._rawOpenAIJSON.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>
+            </div>
+        </div>
+        ` : ''}
 
         <div class="card" style="padding:0.85rem; margin-bottom:0.75rem;">
             <h3 style="margin-bottom:0.5rem;">Comprobaciones automaticas (detalle vs factura)</h3>
