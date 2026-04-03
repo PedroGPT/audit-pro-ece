@@ -49,13 +49,63 @@ window.pendingPdfFiles = new Map();
 
 let invoiceFilesDbPromise = null;
 
-function getInvoiceStorageKey(inv = {}) {
+function normalizePdfToken(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+function getLegacyInvoiceStorageKey(inv = {}) {
     return [
         String(inv.invoiceNum || 'S/N').trim(),
         String(inv.fileName || '').trim(),
         String(inv.period || '').trim(),
         String(inv.cups || '').trim()
     ].join('|');
+}
+
+function getInvoiceStorageKeys(inv = {}, file = null) {
+    const keys = [];
+    const fileName = normalizePdfToken(file?.name || inv.fileName || '');
+    const invoiceNum = normalizePdfToken(inv.invoiceNum || '');
+    const cups = normalizePdfToken(inv.cups || '');
+    const period = normalizePdfToken(inv.period || '');
+
+    if (fileName) keys.push(`file:${fileName}`);
+    if (invoiceNum && cups) keys.push(`inv:${invoiceNum}|${cups}|${period}`);
+
+    const legacy = getLegacyInvoiceStorageKey(inv);
+    if (legacy) keys.push(legacy);
+
+    return [...new Set(keys.filter(Boolean))];
+}
+
+function isSameInvoiceRecord(a, b) {
+    const keysA = new Set(getInvoiceStorageKeys(a));
+    const keysB = getInvoiceStorageKeys(b);
+    return keysB.some(key => keysA.has(key));
+}
+
+function cachePendingPdf(inv = {}, file = null) {
+    if (!file) return;
+    const keys = getInvoiceStorageKeys(inv, file);
+    keys.forEach(key => window.pendingPdfFiles.set(key, file));
+
+    const rawFileName = String(file.name || inv.fileName || '').trim();
+    if (rawFileName) window.pendingPdfFiles.set(rawFileName, file);
+}
+
+function getPendingPdfFromMemory(inv = {}) {
+    const keys = getInvoiceStorageKeys(inv);
+    for (const key of keys) {
+        const file = window.pendingPdfFiles.get(key);
+        if (file) return file;
+    }
+
+    const rawFileName = String(inv.fileName || '').trim();
+    if (rawFileName) {
+        const direct = window.pendingPdfFiles.get(rawFileName);
+        if (direct) return direct;
+    }
+    return null;
 }
 
 function openInvoiceFilesDb() {
@@ -82,16 +132,18 @@ function openInvoiceFilesDb() {
 
 async function saveInvoicePdfToStore(inv, file) {
     const db = await openInvoiceFilesDb();
-    const storageKey = getInvoiceStorageKey(inv);
-    if (!db || !storageKey || !file) return;
+    const storageKeys = getInvoiceStorageKeys(inv, file);
+    if (!db || storageKeys.length === 0 || !file) return;
 
     await new Promise((resolve, reject) => {
         const tx = db.transaction(INVOICE_FILES_STORE_NAME, 'readwrite');
-        tx.objectStore(INVOICE_FILES_STORE_NAME).put({
-            id: storageKey,
-            fileName: String(file.name || inv.fileName || 'factura.pdf'),
-            type: String(file.type || 'application/pdf'),
-            blob: file
+        storageKeys.forEach(id => {
+            tx.objectStore(INVOICE_FILES_STORE_NAME).put({
+                id,
+                fileName: String(file.name || inv.fileName || 'factura.pdf'),
+                type: String(file.type || 'application/pdf'),
+                blob: file
+            });
         });
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
@@ -103,38 +155,38 @@ async function saveInvoicePdfToStore(inv, file) {
 
 async function loadInvoicePdfFromStore(inv) {
     const db = await openInvoiceFilesDb();
-    const storageKey = getInvoiceStorageKey(inv);
-    if (!db || !storageKey) return null;
+    const storageKeys = getInvoiceStorageKeys(inv);
+    if (!db || storageKeys.length === 0) return null;
 
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(INVOICE_FILES_STORE_NAME, 'readonly');
-        const request = tx.objectStore(INVOICE_FILES_STORE_NAME).get(storageKey);
-        request.onsuccess = () => {
-            const record = request.result;
-            if (!record?.blob) {
-                resolve(null);
-                return;
-            }
-            const file = record.blob instanceof File
-                ? record.blob
-                : new File([record.blob], record.fileName || inv.fileName || 'factura.pdf', { type: record.type || 'application/pdf' });
-            resolve(file);
-        };
-        request.onerror = () => reject(request.error);
-    }).catch(err => {
-        console.warn('[PDFStore] No se pudo recuperar PDF de IndexedDB:', err);
-        return null;
-    });
+    for (const id of storageKeys) {
+        const found = await new Promise((resolve, reject) => {
+            const tx = db.transaction(INVOICE_FILES_STORE_NAME, 'readonly');
+            const request = tx.objectStore(INVOICE_FILES_STORE_NAME).get(id);
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => reject(request.error);
+        }).catch(err => {
+            console.warn('[PDFStore] No se pudo recuperar PDF de IndexedDB:', err);
+            return null;
+        });
+
+        if (found?.blob) {
+            return found.blob instanceof File
+                ? found.blob
+                : new File([found.blob], found.fileName || inv.fileName || 'factura.pdf', { type: found.type || 'application/pdf' });
+        }
+    }
+
+    return null;
 }
 
 async function deleteInvoicePdfFromStore(inv) {
     const db = await openInvoiceFilesDb();
-    const storageKey = getInvoiceStorageKey(inv);
-    if (!db || !storageKey) return;
+    const storageKeys = getInvoiceStorageKeys(inv);
+    if (!db || storageKeys.length === 0) return;
 
     await new Promise((resolve, reject) => {
         const tx = db.transaction(INVOICE_FILES_STORE_NAME, 'readwrite');
-        tx.objectStore(INVOICE_FILES_STORE_NAME).delete(storageKey);
+        storageKeys.forEach(id => tx.objectStore(INVOICE_FILES_STORE_NAME).delete(id));
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
         tx.onabort = () => reject(tx.error);
@@ -160,12 +212,12 @@ async function clearInvoicePdfStore() {
 
 async function getInvoicePdfFile(inv) {
     if (!inv) return null;
-    const inMemory = window.pendingPdfFiles.get(inv.fileName);
+    const inMemory = getPendingPdfFromMemory(inv);
     if (inMemory) return inMemory;
 
     const storedFile = await loadInvoicePdfFromStore(inv);
     if (storedFile) {
-        window.pendingPdfFiles.set(inv.fileName, storedFile);
+        cachePendingPdf(inv, storedFile);
     }
     return storedFile;
 }
@@ -746,7 +798,7 @@ async function processFiles(files) {
     for (const file of filesToProcess) {
         try {
             console.log(`[Auditor] Analizando documento: ${file.name}`);
-            window.pendingPdfFiles.set(file.name, file);
+            cachePendingPdf({ fileName: file.name }, file);
             
             const arrayBuffer = await file.arrayBuffer();
             const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -784,6 +836,7 @@ async function processFiles(files) {
             auditData.invoicePreview = invoicePreviewPages[0] || null;
             auditData.invoicePreviewTotalPages = Number(pdf.numPages || 0);
             auditData.invoicePreviewRenderedPages = invoicePreviewPages.length;
+            cachePendingPdf(auditData, file);
             await saveInvoicePdfToStore(auditData, file);
             invoices.push(auditData);
 
@@ -1752,12 +1805,11 @@ function toggleAuditCorrections(rowIndex) {
 }
 
 function persistCorrectedInvoice(updatedInvoice) {
-    const storageKey = getInvoiceStorageKey(updatedInvoice);
     const dbPayload = sanitizeInvoiceForStorage(updatedInvoice);
     let foundInDb = false;
 
     dbInvoices.forEach(inv => {
-        if (getInvoiceStorageKey(inv) === storageKey) {
+        if (isSameInvoiceRecord(inv, updatedInvoice)) {
             Object.assign(inv, JSON.parse(JSON.stringify(dbPayload)));
             foundInDb = true;
         }
@@ -1768,12 +1820,12 @@ function persistCorrectedInvoice(updatedInvoice) {
     }
 
     invoices.forEach(inv => {
-        if (getInvoiceStorageKey(inv) === storageKey) {
+        if (isSameInvoiceRecord(inv, updatedInvoice)) {
             Object.assign(inv, JSON.parse(JSON.stringify(updatedInvoice)));
         }
     });
 
-    if (compareBaseInvoice && getInvoiceStorageKey(compareBaseInvoice) === storageKey) {
+    if (compareBaseInvoice && isSameInvoiceRecord(compareBaseInvoice, updatedInvoice)) {
         Object.assign(compareBaseInvoice, JSON.parse(JSON.stringify(updatedInvoice)));
     }
 
