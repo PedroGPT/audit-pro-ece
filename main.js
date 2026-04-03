@@ -639,6 +639,33 @@ function calculateEnergyWithTollsTotal(energyItems = [], tollItems = []) {
     }, 0);
 }
 
+function calculateCommodityEnergyTotal(energyItems = []) {
+    return (energyItems || [])
+        .filter(item => Number(item.period) >= 1 && Number(item.kwh || 0) > 0)
+        .reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0);
+}
+
+function buildResidualTollPeriodItems(inv) {
+    const energyItems = (inv.energyPeriodItems || []).filter(item => Number(item.period) >= 1 && Number(item.kwh || 0) > 0);
+    const energyRef = Number(inv.energyCost || inv.breakdown?.energyCost || 0);
+    if (!energyItems.length || energyRef <= 0) return [];
+
+    const commodityTotal = calculateCommodityEnergyTotal(energyItems);
+    const residualTotal = energyRef - commodityTotal;
+    const totalKwh = energyItems.reduce((sum, item) => sum + Number(item.kwh || 0), 0);
+
+    if (residualTotal <= 0 || totalKwh <= 0) return [];
+
+    const unitPriceKwh = residualTotal / totalKwh;
+    if (unitPriceKwh <= 0) return [];
+
+    return energyItems.map(item => ({
+        period: Number(item.period),
+        kwh: Number(item.kwh || 0),
+        unitPriceKwh
+    }));
+}
+
 function shouldPreferRegexTolls(inv, regexTolls = []) {
     if (!regexTolls.length) return false;
 
@@ -660,6 +687,22 @@ function shouldPreferRegexTolls(inv, regexTolls = []) {
     const regexIsClearlyBetter = regexDiff + 0.5 < currentDiff;
 
     return currentBlowsUpEnergy && regexIsClearlyBetter;
+}
+
+function shouldUseResidualTolls(inv, residualTolls = []) {
+    if (!residualTolls.length) return false;
+
+    const energyItems = inv.energyPeriodItems || [];
+    const currentTolls = inv.tollPeriodItems || [];
+    const energyRef = Number(inv.energyCost || inv.breakdown?.energyCost || 0);
+    if (!energyItems.length || !currentTolls.length || energyRef <= 0) return false;
+
+    const currentTotal = calculateEnergyWithTollsTotal(energyItems, currentTolls);
+    const residualTotal = calculateEnergyWithTollsTotal(energyItems, residualTolls);
+    const currentDiff = Math.abs(currentTotal - energyRef);
+    const residualDiff = Math.abs(residualTotal - energyRef);
+
+    return currentTotal > (energyRef + 0.5) && residualDiff + 0.5 < currentDiff;
 }
 
 function sanitizeInvoiceForStorage(inv) {
@@ -850,6 +893,7 @@ async function runExtractionIA(text, fileName) {
         }
 
         const regexTolls = extractTollPeriodItems(text);
+        const residualTolls = buildResidualTollPeriodItems(inv);
 
         if (tollFromIA.length > 0) {
             inv.tollPeriodItems = tollFromIA;
@@ -858,10 +902,18 @@ async function runExtractionIA(text, fileName) {
             if (shouldPreferRegexTolls(inv, regexTolls)) {
                 inv.tollPeriodItems = regexTolls;
                 inv._tollPeriodsSource = 'regex-fallback-suspicious-openai';
+            } else if (shouldUseResidualTolls(inv, residualTolls)) {
+                inv.tollPeriodItems = residualTolls;
+                inv._tollPeriodsSource = 'residual-fallback-energy-total';
             }
         } else {
             inv.tollPeriodItems = regexTolls;
             inv._tollPeriodsSource = inv.tollPeriodItems.length > 0 ? 'regex' : 'none';
+
+            if ((inv.tollPeriodItems.length === 0 || shouldUseResidualTolls(inv, residualTolls)) && residualTolls.length > 0) {
+                inv.tollPeriodItems = residualTolls;
+                inv._tollPeriodsSource = 'residual-fallback-energy-total';
+            }
         }
 
         normalizeEnergyAndTolls(inv);
