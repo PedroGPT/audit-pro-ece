@@ -947,6 +947,9 @@ async function runExtractionIA(text, fileName) {
 
         const regexTolls = extractTollPeriodItems(text);
         const residualTolls = buildResidualTollPeriodItems(inv);
+        inv._tollOpenAIItems = tollFromIA;
+        inv._tollRegexItems = regexTolls;
+        inv._tollResidualItems = residualTolls;
 
         if (tollFromIA.length > 0) {
             inv.tollPeriodItems = tollFromIA;
@@ -1711,6 +1714,33 @@ function openClientSupplyAuditModal(rowIndex) {
         </tr>
     `).join('');
 
+    const energyRefForSources = Number(inv.energyCost || inv.breakdown?.energyCost || 0);
+    const candidateOpenai = Array.isArray(inv._tollOpenAIItems) ? inv._tollOpenAIItems : [];
+    const candidateRegex = Array.isArray(inv._tollRegexItems) ? inv._tollRegexItems : [];
+    const candidateResidual = Array.isArray(inv._tollResidualItems) ? inv._tollResidualItems : [];
+
+    const buildSourceOptionRow = (label, sourceKey, items) => {
+        if (!items.length) {
+            return `<tr><td>${label}</td><td colspan="3">No disponible en esta factura.</td></tr>`;
+        }
+        const total = calculateEnergyWithTollsTotal(inv.energyPeriodItems || [], items);
+        const diff = Math.abs(total - energyRefForSources);
+        return `
+            <tr>
+                <td>${label}</td>
+                <td>${formatCurrency(total)}</td>
+                <td>${formatCurrency(diff)}</td>
+                <td><button class="btn secondary btn-sm" onclick="applyAuditTollSource(${rowIndex}, '${sourceKey}')">Usar ${label}</button></td>
+            </tr>
+        `;
+    };
+
+    const sourceOptionRows = [
+        buildSourceOptionRow('OpenAI', 'openai', candidateOpenai),
+        buildSourceOptionRow('Regex', 'regex', candidateRegex),
+        buildSourceOptionRow('Residual', 'residual', candidateResidual)
+    ].join('');
+
     const periodEditorRows = activePeriods.map(period => {
         const energy = (inv.energyPeriodItems || []).find(item => Number(item.period) === Number(period)) || { kwh: 0, unitPriceKwh: 0 };
         const toll = (inv.tollPeriodItems || []).find(item => Number(item.period) === Number(period)) || { unitPriceKwh: 0 };
@@ -1740,6 +1770,12 @@ function openClientSupplyAuditModal(rowIndex) {
                 <table class="modal-table">
                     <thead><tr><th>Dato</th><th>Valor</th></tr></thead>
                     <tbody>${sourceRows}</tbody>
+                </table>
+            </div>
+            <div style="overflow-x:auto; margin-top:0.75rem;">
+                <table class="modal-table">
+                    <thead><tr><th>Fuente peajes</th><th>Energía total detalle</th><th>Desvío vs energía factura</th><th>Acción</th></tr></thead>
+                    <tbody>${sourceOptionRows}</tbody>
                 </table>
             </div>
             <p style="margin:0.65rem 0 0; color:#475569;">Si aquí ves una fuente incorrecta o el cuadre falla, puedes corregir los periodos y guardar la versión manual para usarla después en comparativas.</p>
@@ -1802,6 +1838,39 @@ function toggleAuditCorrections(rowIndex) {
     const panel = document.getElementById(`audit-corrections-${rowIndex}`);
     if (!panel) return;
     panel.classList.toggle('hidden');
+}
+
+function applyAuditTollSource(rowIndex, sourceKey) {
+    const row = clientSupplyRows[rowIndex];
+    if (!row || !row.invoice) return;
+
+    const inv = row.invoice;
+    const sourceMap = {
+        openai: Array.isArray(inv._tollOpenAIItems) ? inv._tollOpenAIItems : [],
+        regex: Array.isArray(inv._tollRegexItems) ? inv._tollRegexItems : [],
+        residual: Array.isArray(inv._tollResidualItems) ? inv._tollResidualItems : []
+    };
+
+    const selected = sourceMap[sourceKey] || [];
+    if (!selected.length) {
+        alert('Esa fuente no está disponible para esta factura.');
+        return;
+    }
+
+    inv.tollPeriodItems = selected.map(item => ({
+        period: Number(item.period),
+        kwh: Number(item.kwh || 0),
+        unitPriceKwh: Number(item.unitPriceKwh || 0)
+    }));
+
+    inv._tollPeriodsSource = `manual-${sourceKey}`;
+    inv._manualPeriodOverrides = true;
+    inv._manualEditedAt = new Date().toISOString();
+
+    normalizeEnergyAndTolls(inv);
+    validateMandatoryTolls(inv);
+    persistCorrectedInvoice(inv);
+    openClientSupplyAuditModal(rowIndex);
 }
 
 function persistCorrectedInvoice(updatedInvoice) {
@@ -4081,6 +4150,7 @@ window.openClientSupplyInvoice = openClientSupplyInvoice;
 window.openClientSupplyPdfOriginal = openClientSupplyPdfOriginal;
 window.openClientSupplyAuditModal = openClientSupplyAuditModal;
 window.toggleAuditCorrections = toggleAuditCorrections;
+window.applyAuditTollSource = applyAuditTollSource;
 window.saveAuditCorrections = saveAuditCorrections;
 window.closeClientSupplyAuditModal = closeClientSupplyAuditModal;
 window.closeClientSupplyInvoiceModal = closeClientSupplyInvoiceModal;
