@@ -1278,15 +1278,18 @@ function fallbackParseInvoiceText(text, fileName) {
 // 6. MOTOR DE BASE DE DATOS Y PERSISTENCIA
 // ========================================================================
 function saveToDatabase(invoiceRecords) {
+    const sanitizedRecords = (invoiceRecords || []).map(sanitizeInvoiceForStorage);
+    dbInvoices = [...sanitizedRecords, ...dbInvoices];
+
     try {
-        const sanitizedRecords = (invoiceRecords || []).map(sanitizeInvoiceForStorage);
-        dbInvoices = [...sanitizedRecords, ...dbInvoices];
         localStorage.setItem('audit_pro_db', JSON.stringify(dbInvoices));
-        renderHistory();
-        renderClients();
     } catch (err) {
-        console.error('Error guardando en database:', err);
+        console.warn('Error guardando en localStorage (continuando en memoria):', err);
     }
+
+    // Refrescar UI siempre, incluso si localStorage falla
+    renderHistory();
+    renderClients();
 }
 
 async function cloudSync(invoice) {
@@ -1381,9 +1384,14 @@ async function cloudLoadPdf(inv) {
 function loadLocalStore() {
     const stored = localStorage.getItem('audit_pro_db');
     if (stored) {
-        dbInvoices = JSON.parse(stored).map(sanitizeInvoiceForStorage);
-        localStorage.setItem('audit_pro_db', JSON.stringify(dbInvoices));
-        console.log("[LocalDB] Cargado:", dbInvoices.length, "registros");
+        try {
+            dbInvoices = JSON.parse(stored).map(sanitizeInvoiceForStorage);
+            localStorage.setItem('audit_pro_db', JSON.stringify(dbInvoices));
+            console.log("[LocalDB] Cargado:", dbInvoices.length, "registros");
+        } catch (err) {
+            console.warn('[LocalDB] Error parseando datos locales, se ignoran:', err);
+            dbInvoices = [];
+        }
     }
     renderHistory();
     renderClients();
