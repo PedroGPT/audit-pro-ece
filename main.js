@@ -942,6 +942,35 @@ async function runExtractionIA(text, fileName) {
         } else {
             inv._energyPeriodsSource = 'openai';
         }
+
+        // Deduplicar energyPeriodItems: OpenAI a veces incluye las filas de peajes
+        // dentro del array de energía (mismo periodo, precio menor = peaje).
+        // Conservamos el precio más alto por periodo como commodity y guardamos
+        // el más bajo como candidato implícito de peaje.
+        {
+            const _emap = {};
+            const _tmap = {};
+            inv.energyPeriodItems.forEach(item => {
+                const p = Number(item.period);
+                const price = Number(item.unitPriceKwh || 0);
+                if (!_emap[p] || price > Number(_emap[p].unitPriceKwh || 0)) {
+                    if (_emap[p]) {
+                        const old = _emap[p];
+                        if (!_tmap[p] || Number(old.unitPriceKwh) < Number(_tmap[p].unitPriceKwh)) {
+                            _tmap[p] = old;
+                        }
+                    }
+                    _emap[p] = item;
+                } else if (price > 0) {
+                    if (!_tmap[p] || price < Number(_tmap[p].unitPriceKwh)) {
+                        _tmap[p] = item;
+                    }
+                }
+            });
+            inv.energyPeriodItems = Object.values(_emap).sort((a, b) => Number(a.period) - Number(b.period));
+            inv._impliedTollsFromEnergy = Object.values(_tmap).filter(t => Number(t.unitPriceKwh || 0) > 0);
+        }
+
         if (inv.powerPeriodItems.length === 0) {
             inv.powerPeriodItems = extractPowerPeriodItems(text);
             inv._powerPeriodsSource = inv.powerPeriodItems.length > 0 ? 'regex' : 'none';
@@ -967,6 +996,12 @@ async function runExtractionIA(text, fileName) {
             inv.tollPeriodItems = regexTolls;
             inv._tollPeriodsSource = inv.tollPeriodItems.length > 0 ? 'regex' : 'none';
 
+            // Si regex vacío y tenemos peajes inferidos de duplicados en energyPeriodItems, usarlos
+            if (inv.tollPeriodItems.length === 0 && (inv._impliedTollsFromEnergy || []).length > 0) {
+                inv.tollPeriodItems = inv._impliedTollsFromEnergy;
+                inv._tollPeriodsSource = 'implied-from-energy-dedup';
+            }
+
             if ((inv.tollPeriodItems.length === 0 || shouldUseResidualTolls(inv, residualTolls)) && residualTolls.length > 0) {
                 inv.tollPeriodItems = residualTolls;
                 inv._tollPeriodsSource = 'residual-fallback-energy-total';
@@ -978,6 +1013,7 @@ async function runExtractionIA(text, fileName) {
         console.log('[Debug] Toll extraction', {
             source: inv._tollPeriodsSource,
             tollFromIA,
+            impliedTolls: inv._impliedTollsFromEnergy,
             tollFinal: inv.tollPeriodItems,
             energyPeriods: inv.energyPeriodItems
         });
