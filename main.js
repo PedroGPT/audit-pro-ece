@@ -331,8 +331,44 @@ function parseSpanishNumber(value) {
 function parsePeriodValue(value) {
     if (value === null || value === undefined) return 0;
     if (typeof value === 'number') return value >= 1 && value <= 6 ? value : 0;
-    const match = String(value).match(/[1-6]/);
-    return match ? Number(match[0]) : 0;
+    const raw = String(value).trim().toUpperCase();
+    if (!raw) return 0;
+
+    const explicitPeriod = raw.match(/(?:^|\b)P\s*([1-6])(?:\b|$)/i);
+    if (explicitPeriod) return Number(explicitPeriod[1]);
+
+    const namedPeriod = raw.match(/(?:^|\b)PERIODO\s*([1-6])(?:\b|$)/i);
+    if (namedPeriod) return Number(namedPeriod[1]);
+
+    const direct = raw.match(/^([1-6])$/);
+    return direct ? Number(direct[1]) : 0;
+}
+
+function normalizeTariffTypeValue(value) {
+    const raw = String(value || '').replace(/\s+/g, '').toUpperCase();
+    if (raw.startsWith('2.0')) return '2.0';
+    if (raw.startsWith('3.0')) return '3.0';
+    if (raw.startsWith('6.1')) return '6.1';
+    return String(value || '').trim();
+}
+
+function assignSequentialPeriodsIfNeeded(items = [], tariffType = '') {
+    const validItems = (items || []).filter(item => Number(item.kwh || item.kw || 0) > 0);
+    if (!validItems.length) return [];
+
+    const hasExplicitPeriods = validItems.some(item => Number(item.period || 0) >= 1 && Number(item.period || 0) <= 6);
+    if (hasExplicitPeriods) {
+        return validItems.filter(item => Number(item.period || 0) >= 1 && Number(item.period || 0) <= 6);
+    }
+
+    const configured = getConfiguredEnergyPeriodsByTariff(normalizeTariffTypeValue(tariffType));
+    const fallbackPeriods = configured.slice(0, validItems.length);
+    if (fallbackPeriods.length !== validItems.length) return [];
+
+    return validItems.map((item, index) => ({
+        ...item,
+        period: fallbackPeriods[index]
+    }));
 }
 
 function firstPositiveNumber(...values) {
@@ -1057,30 +1093,30 @@ async function runExtractionIA(text, fileName) {
         inv.invoiceNum = inv.invoiceNum || inv.factura || inv.invoice || 'S/N';
         inv.clientName = inv.clientName || inv.customerName || inv.cliente || 'Desconocido';
         inv.comercializadora = inv.comercializadora || inv.provider || inv.vendedor || inv.company || inv.distribuidora || inv.operador || detectComercializadoraFromText(text);
-        inv.tariffType = inv.tariffType || inv.tarifa || inv.tariff || inv.tipoTarifa || detectTariffTypeFromText(text);
+        inv.tariffType = normalizeTariffTypeValue(inv.tariffType || inv.tarifa || inv.tariff || inv.tipoTarifa || detectTariffTypeFromText(text));
         inv.supplyAddress = inv.supplyAddress || inv.address || inv.direccion || 'N/D';
         inv.cups = inv.cups || inv.CUPS || 'N/D';
         inv.period = inv.period || inv.periodo || 'N/D';
 
         // Si el modelo da items por periodo guardarlos
-        inv.energyPeriodItems = (inv.energyPeriodItems || []).map(item => ({
+        inv.energyPeriodItems = assignSequentialPeriodsIfNeeded((inv.energyPeriodItems || []).map(item => ({
             period: parsePeriodValue(item.period ?? item.periodo ?? item.p),
             kwh: firstPositiveNumber(item.kwh, item.consumption, item.consumo),
             unitPriceKwh: firstPositiveNumber(item.unitPriceKwh, item.unitPrice, item.priceKwh, item.price, item.precio)
-        })).filter(item => item.period >= 1 && item.period <= 6);
+        })), inv.tariffType).filter(item => item.period >= 1 && item.period <= 6);
 
-        inv.powerPeriodItems = (inv.powerPeriodItems || []).map(item => ({
+        inv.powerPeriodItems = assignSequentialPeriodsIfNeeded((inv.powerPeriodItems || []).map(item => ({
             period: parsePeriodValue(item.period ?? item.periodo ?? item.p),
             kw: firstPositiveNumber(item.kw, item.powerKw, item.potencia),
             unitPriceKw: firstPositiveNumber(item.unitPriceKw, item.unitPrice, item.priceKw, item.price, item.precio),
             days: item.days || item.dias || item.numDays || null
-        })).filter(item => item.period >= 1 && item.period <= 6);
+        })), inv.tariffType).filter(item => item.period >= 1 && item.period <= 6);
 
-        let tollFromIA = (inv.tollPeriodItems || inv.tollsPeriodItems || inv.peajesPeriodItems || []).map(item => ({
+        let tollFromIA = assignSequentialPeriodsIfNeeded((inv.tollPeriodItems || inv.tollsPeriodItems || inv.peajesPeriodItems || []).map(item => ({
             period: parsePeriodValue(item.period ?? item.periodo ?? item.p),
             kwh: firstPositiveNumber(item.kwh, item.consumption, item.consumo),
             unitPriceKwh: firstPositiveNumber(item.unitPriceKwh, item.unitPrice, item.priceKwh, item.price, item.peajePrice, item.precioPeaje, item.precio)
-        })).filter(item => item.period >= 1 && item.period <= 6);
+        })), inv.tariffType).filter(item => item.period >= 1 && item.period <= 6);
 
         if (tollFromIA.length === 0 && tollBlockText && /peajes|cargos/i.test(tollBlockText)) {
             try {
@@ -1093,11 +1129,11 @@ async function runExtractionIA(text, fileName) {
                     Bloque de peajes/cargos:
                     ${tollBlockText}`
                 );
-                const focusedTolls = (tollRetryParsed.tollPeriodItems || []).map(item => ({
+                const focusedTolls = assignSequentialPeriodsIfNeeded((tollRetryParsed.tollPeriodItems || []).map(item => ({
                     period: parsePeriodValue(item.period ?? item.periodo ?? item.p),
                     kwh: firstPositiveNumber(item.kwh, item.consumption, item.consumo),
                     unitPriceKwh: firstPositiveNumber(item.unitPriceKwh, item.unitPrice, item.priceKwh, item.price, item.peajePrice, item.precioPeaje, item.precio)
-                })).filter(item => item.period >= 1 && item.period <= 6);
+                })), inv.tariffType).filter(item => item.period >= 1 && item.period <= 6);
                 if (focusedTolls.length > 0) {
                     tollFromIA = focusedTolls;
                     inv.tollSourceLabel = tollRetryParsed.tollSourceLabel || inv.tollSourceLabel || '';
