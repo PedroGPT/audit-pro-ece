@@ -85,6 +85,20 @@ function isSameInvoiceRecord(a, b) {
     return keysB.some(key => keysA.has(key));
 }
 
+function upsertInvoiceInList(list = [], invoice = {}, putFirst = true) {
+    const idx = list.findIndex(item => isSameInvoiceRecord(item, invoice));
+    if (idx >= 0) {
+        list.splice(idx, 1);
+        if (putFirst) list.unshift(invoice);
+        else list.push(invoice);
+        return { updated: true, index: idx };
+    }
+
+    if (putFirst) list.unshift(invoice);
+    else list.push(invoice);
+    return { updated: false, index: -1 };
+}
+
 function cachePendingPdf(inv = {}, file = null) {
     if (!file) return;
     const keys = getInvoiceStorageKeys(inv, file);
@@ -1050,6 +1064,7 @@ async function processFiles(files) {
     if (loading) loading.classList.remove('hidden');
 
     let rejectedByMissingTolls = 0;
+    const duplicateNotices = [];
 
     for (const file of filesToProcess) {
         try {
@@ -1094,10 +1109,14 @@ async function processFiles(files) {
             auditData.invoicePreviewRenderedPages = invoicePreviewPages.length;
             cachePendingPdf(auditData, file);
             await saveInvoicePdfToStore(auditData, file);
-            invoices.push(auditData);
+            const currentUpsert = upsertInvoiceInList(invoices, auditData, false);
 
             // Siempre guardar en historial local (incluidas rechazadas)
-            saveToDatabase([auditData]);
+            const dbUpsert = saveToDatabase([auditData]);
+            if (currentUpsert.updated || dbUpsert.updated > 0) {
+                duplicateNotices.push(auditData.invoiceNum || auditData.fileName || file.name);
+                console.log('[Dup] Factura duplicada detectada, se actualiza en vez de duplicar:', auditData.invoiceNum || auditData.fileName || file.name);
+            }
 
             // Solo sincronizar cloud si cumple la regla de peajes obligatorios
             if (hasMandatoryTolls) {
@@ -1120,6 +1139,11 @@ async function processFiles(files) {
 
     if (rejectedByMissingTolls > 0) {
         alert(`Se rechazaron ${rejectedByMissingTolls} factura(s) por no incluir peajes por periodo. Ninguna factura puede pasar sin peajes.`);
+    }
+
+    if (duplicateNotices.length > 0) {
+        const uniqueDup = [...new Set(duplicateNotices)];
+        alert(`Se detectaron ${uniqueDup.length} factura(s) ya cargadas y se actualizaron sin duplicarlas:\n- ${uniqueDup.join('\n- ')}`);
     }
 
     const skippedBySize = oversized.length;
@@ -1574,7 +1598,14 @@ function fallbackParseInvoiceText(text, fileName) {
 // ========================================================================
 function saveToDatabase(invoiceRecords) {
     const sanitizedRecords = (invoiceRecords || []).map(sanitizeInvoiceForStorage);
-    dbInvoices = [...sanitizedRecords, ...dbInvoices];
+    let updated = 0;
+    let inserted = 0;
+
+    sanitizedRecords.forEach(record => {
+        const result = upsertInvoiceInList(dbInvoices, record, true);
+        if (result.updated) updated += 1;
+        else inserted += 1;
+    });
 
     try {
         localStorage.setItem('audit_pro_db', JSON.stringify(dbInvoices));
@@ -1585,6 +1616,8 @@ function saveToDatabase(invoiceRecords) {
     // Refrescar UI siempre, incluso si localStorage falla
     renderHistory();
     renderClients();
+
+    return { updated, inserted };
 }
 
 async function cloudSync(invoice) {
