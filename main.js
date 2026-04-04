@@ -397,6 +397,51 @@ function detectComercializadoraFromText(text) {
     return 'N/D';
 }
 
+function normalizeNameToken(value) {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/[\.,;:()\-_/]/g, ' ')
+        .replace(/\b(s\.?l\.?|s\.?a\.?|slu|slne|sae)\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function detectClientNameFromText(text) {
+    const raw = String(text || '');
+    const patterns = [
+        /(?:cliente|titular|raz[oó]n\s+social|nombre\s+del\s+titular)\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i,
+        /(?:datos\s+del\s+cliente)\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i
+    ];
+
+    for (const re of patterns) {
+        const m = raw.match(re);
+        if (!m) continue;
+        const name = String(m[1] || '').trim().replace(/\s+/g, ' ');
+        if (name && !/comercializadora|distribuidora|energ[ií]a/i.test(name)) {
+            return name.toUpperCase();
+        }
+    }
+
+    return 'Desconocido';
+}
+
+function resolveClientName(candidateName, comercializadora, text) {
+    const candidate = String(candidateName || '').trim();
+    const comm = String(comercializadora || '').trim();
+    const candNorm = normalizeNameToken(candidate);
+    const commNorm = normalizeNameToken(comm);
+
+    const missing = !candNorm || candNorm === 'desconocido' || candNorm === 'n d';
+    const sameAsCommercializer = candNorm && commNorm && candNorm === commNorm;
+
+    if (missing || sameAsCommercializer) {
+        const detected = detectClientNameFromText(text);
+        if (detected && detected !== 'Desconocido') return detected;
+    }
+
+    return candidate || 'Desconocido';
+}
+
 async function generatePdfPagePreviews(pdf, maxPages = 8) {
     try {
         const totalPages = Number(pdf?.numPages || 0);
@@ -1093,6 +1138,7 @@ async function runExtractionIA(text, fileName) {
         inv.invoiceNum = inv.invoiceNum || inv.factura || inv.invoice || 'S/N';
         inv.clientName = inv.clientName || inv.customerName || inv.cliente || 'Desconocido';
         inv.comercializadora = inv.comercializadora || inv.provider || inv.vendedor || inv.company || inv.distribuidora || inv.operador || detectComercializadoraFromText(text);
+        inv.clientName = resolveClientName(inv.clientName, inv.comercializadora, text);
         inv.tariffType = normalizeTariffTypeValue(inv.tariffType || inv.tarifa || inv.tariff || inv.tipoTarifa || detectTariffTypeFromText(text));
         inv.supplyAddress = inv.supplyAddress || inv.address || inv.direccion || 'N/D';
         inv.cups = inv.cups || inv.CUPS || 'N/D';
@@ -2002,7 +2048,20 @@ function computeInvoiceAutoAudit(inv) {
     const taxRef = Number(inv.taxValue || inv.breakdown?.taxAmount || 0);
     const totalRef = Number(inv.totalCalculated || 0);
 
-    const subtotalDetail = energyTotalDetail + powerDetail + others + alquiler + reactive;
+    let otherChargesDetail = others + alquiler + reactive;
+    if (totalRef > 0) {
+        const subtotalFromTotal = totalRef - ieeRef - taxRef;
+        if (subtotalFromTotal > 0) {
+            const impliedOtherFromDetail = Math.max(0, subtotalFromTotal - (energyTotalDetail + powerDetail));
+            // En algunas facturas IA mete alquiler dentro de othersCost y también en alquiler.
+            // Si hay desvío claro, usar el cargo implícito por coherencia fiscal.
+            if (Math.abs(otherChargesDetail - impliedOtherFromDetail) > 0.5) {
+                otherChargesDetail = impliedOtherFromDetail;
+            }
+        }
+    }
+
+    const subtotalDetail = energyTotalDetail + powerDetail + otherChargesDetail;
     const totalDetail = subtotalDetail + ieeRef + taxRef;
 
     const checks = [
@@ -2049,6 +2108,7 @@ function computeInvoiceAutoAudit(inv) {
             others,
             alquiler,
             reactive,
+            otherChargesDetail,
             ieeRef,
             taxRef,
             subtotalDetail,
@@ -2181,7 +2241,7 @@ function openClientSupplyAuditModal(rowIndex) {
                         <tr><td>Peajes/cargos energia (detalle)</td><td>${formatCurrency(audit.breakdown.tollsDetail)}</td></tr>
                         <tr><td>Energia total detalle</td><td>${formatCurrency(audit.breakdown.energyTotalDetail)}</td></tr>
                         <tr><td>Potencia total detalle</td><td>${formatCurrency(audit.breakdown.powerDetail)}</td></tr>
-                        <tr><td>Otros + Alquiler + Reactiva</td><td>${formatCurrency(audit.breakdown.others + audit.breakdown.alquiler + audit.breakdown.reactive)}</td></tr>
+                        <tr><td>Otros + Alquiler + Reactiva</td><td>${formatCurrency(audit.breakdown.otherChargesDetail)}</td></tr>
                         <tr><td>IEE (factura)</td><td>${formatCurrency(audit.breakdown.ieeRef)}</td></tr>
                         <tr><td>${inv.taxName || 'Impuesto'} (factura)</td><td>${formatCurrency(audit.breakdown.taxRef)}</td></tr>
                         <tr style="font-weight:700; background:#eef2ff;"><td>Total detalle calculado</td><td>${formatCurrency(audit.breakdown.totalDetail)}</td></tr>
