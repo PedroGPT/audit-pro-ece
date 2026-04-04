@@ -760,6 +760,36 @@ function calculateCommodityEnergyTotal(energyItems = []) {
         .reduce((sum, item) => sum + (Number(item.kwh || 0) * Number(item.unitPriceKwh || 0)), 0);
 }
 
+function reconcileEnergyCostReference(inv) {
+    const energyItems = inv.energyPeriodItems || [];
+    const tollItems = inv.tollPeriodItems || [];
+    const rawEnergyCost = Number(inv.energyCost || 0);
+    if (!energyItems.length || rawEnergyCost <= 0) return;
+
+    const commodityTotal = calculateCommodityEnergyTotal(energyItems);
+    const energyWithTollsTotal = calculateEnergyWithTollsTotal(energyItems, tollItems);
+    const tollsTotal = Math.max(0, energyWithTollsTotal - commodityTotal);
+
+    const diffToCommodity = Math.abs(rawEnergyCost - commodityTotal);
+    const diffToFullEnergy = Math.abs(rawEnergyCost - energyWithTollsTotal);
+
+    // Caso detectado en varias facturas: la IA separa bien tollPeriodItems, pero energyCost
+    // se queda con solo la energía comercializada y no con el término variable completo.
+    if (tollsTotal > 0.5 && diffToCommodity <= 0.75 && diffToFullEnergy > 0.75) {
+        inv._energyCostOriginalAI = rawEnergyCost;
+        inv.energyCost = Number(energyWithTollsTotal.toFixed(2));
+        inv._energyCostSource = 'reconciled-from-period-detail';
+        console.log('[EnergyCost] Reconciliado desde detalle por periodos', {
+            original: rawEnergyCost,
+            commodityTotal,
+            tollsTotal,
+            reconciled: inv.energyCost
+        });
+    } else {
+        inv._energyCostSource = inv._energyCostSource || 'openai';
+    }
+}
+
 function buildResidualTollPeriodItems(inv) {
     const energyItems = (inv.energyPeriodItems || []).filter(item => Number(item.period) >= 1 && Number(item.kwh || 0) > 0);
     const energyRef = Number(inv.energyCost || inv.breakdown?.energyCost || 0);
@@ -998,6 +1028,7 @@ async function runExtractionIA(text, fileName) {
                    - "importe por energía consumida" => energyPeriodItems
                    - "coste de peajes de transporte, distribución y cargos" => tollPeriodItems
                 6. Si no encuentras peajes/cargos por periodo, devuelve tollPeriodItems: [].
+                7. energyCost debe ser el TOTAL del término variable de energía de la factura: energía comercializada + peajes/cargos de energía. No devuelvas en energyCost solo la parte de energía comercializada.
 
                 Ejemplo correcto:
                 - energyPeriodItems: [{"period":"P1","kwh":138.01,"unitPriceKwh":0.230000}]
@@ -1154,6 +1185,7 @@ async function runExtractionIA(text, fileName) {
         }
 
         normalizeEnergyAndTolls(inv);
+        reconcileEnergyCostReference(inv);
 
         console.log('[Debug] Toll extraction', {
             source: inv._tollPeriodsSource,
@@ -1989,6 +2021,7 @@ function openClientSupplyAuditModal(rowIndex) {
         ['Fuente energía por periodos', inv._energyPeriodsSource || 'N/D'],
         ['Fuente peajes/cargos', inv._tollPeriodsSource || 'N/D'],
         ['Fuente potencia por periodos', inv._powerPeriodsSource || 'N/D'],
+        ['Fuente energyCost total variable', inv._energyCostSource || 'N/D'],
         ['Ajuste manual aplicado', inv._manualPeriodOverrides ? 'Sí' : 'No'],
         ['Última corrección manual', inv._manualEditedAt ? new Date(inv._manualEditedAt).toLocaleString('es-ES') : 'N/D']
     ].map(([label, value]) => `
