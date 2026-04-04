@@ -2188,10 +2188,21 @@ function computeInvoiceAutoAudit(inv) {
 
     const energyRef = Number(inv.energyCost || 0);
     const powerRef = Number(inv.powerCost || 0);
-    const subtotalRef = Number(inv.breakdown?.subtotalBase || 0) || (energyRef + powerRef + others + alquiler + reactive);
     const ieeRef = Number(inv.breakdown?.iee || inv.electricityTax || 0);
     const taxRef = Number(inv.taxValue || inv.breakdown?.taxAmount || 0);
     const totalRef = Number(inv.totalCalculated || 0);
+
+    const subtotalFromBreakdown = Number(inv.breakdown?.subtotalBase || 0);
+    const subtotalFromComponents = energyRef + powerRef + others + alquiler + reactive;
+    const subtotalFromTotal = totalRef > 0 ? Math.max(0, totalRef - ieeRef - taxRef) : 0;
+
+    // Prioridad de referencia:
+    // 1) total - impuestos (más estable cuando IA mezcla others/alquiler)
+    // 2) subtotal explícito de breakdown
+    // 3) suma de componentes
+    const subtotalRef = subtotalFromTotal > 0
+        ? subtotalFromTotal
+        : (subtotalFromBreakdown > 0 ? subtotalFromBreakdown : subtotalFromComponents);
 
     let otherChargesDetail = others + alquiler + reactive;
     if (totalRef > 0) {
