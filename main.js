@@ -4232,11 +4232,16 @@ async function deleteHistoryItem(index) {
 async function clearAllHistory() {
     if (confirm('¿Estás seguro de que quieres vaciar TODO el historial? Esta acción no se puede deshacer.')) {
         dbInvoices = [];
+        invoices = [];
+        window.pendingPdfFiles = new Map();
         localStorage.removeItem('audit_pro_db');
         await clearInvoicePdfStore();
+        const dashboard = document.getElementById('dashboard');
+        if (dashboard) dashboard.classList.add('hidden');
+        switchView('audit-view');
         renderHistory();
         renderClients();
-        console.log('[History] Historial vaciado completamente');
+        console.log('[History] Historial y sesion activa vaciados completamente');
     }
 }
 
