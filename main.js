@@ -2006,6 +2006,8 @@ function renderHistory() {
     const historyList = document.getElementById('history-list');
     if (!historyList) return;
 
+    const activeSearch = String(document.getElementById('history-search-input')?.value || '').trim().toLowerCase();
+
     if (!dbInvoices.length) {
         historyList.innerHTML = `
             <div style="text-align: center; padding: 2rem;">
@@ -2024,7 +2026,43 @@ function renderHistory() {
         </div>
     `;
 
-    historyList.innerHTML = clearAllButton + dbInvoices.map((inv, index) => `
+    const searchBox = `
+        <div class="card" style="padding:0.75rem; margin-bottom:0.75rem;">
+            <input
+                id="history-search-input"
+                type="text"
+                value="${activeSearch.replace(/"/g, '&quot;')}"
+                oninput="renderHistory()"
+                placeholder="Buscar por factura, cliente, CUPS o direccion de suministro"
+                style="width:100%; padding:0.6rem 0.75rem; border:1px solid #cbd5e1; border-radius:8px;"
+            >
+        </div>
+    `;
+
+    const indexedInvoices = dbInvoices.map((inv, index) => ({ inv, index }));
+    const filteredInvoices = activeSearch
+        ? indexedInvoices.filter(({ inv }) => {
+            const haystack = [
+                inv.fileName,
+                inv.invoiceNum,
+                inv.clientName,
+                inv.cups,
+                inv.supplyAddress,
+                inv.period,
+                inv.comercializadora
+            ].map(v => String(v || '').toLowerCase()).join(' | ');
+            return haystack.includes(activeSearch);
+        })
+        : indexedInvoices;
+
+    if (filteredInvoices.length === 0) {
+        historyList.innerHTML = searchBox + clearAllButton + `
+            <div class="card" style="padding:1rem;">No hay facturas que coincidan con la busqueda.</div>
+        `;
+        return;
+    }
+
+    historyList.innerHTML = searchBox + clearAllButton + filteredInvoices.map(({ inv, index }) => `
         <div class="card" style="position: relative; padding: 1rem; margin-bottom: 0.75rem;">
             <button class="btn" onclick="deleteHistoryItem(${index})" 
                     style="position: absolute; top: 0.5rem; right: 0.5rem; 
@@ -2037,6 +2075,9 @@ function renderHistory() {
             <div style="display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center;">
                 <div>
                     <strong>${inv.fileName || inv.invoiceNum || 'N/A'}</strong> - ${formatBillingPeriod(inv.period || 'Periodo desconocido')}
+                    <br><small><strong>Cliente:</strong> ${inv.clientName || 'N/D'}</small>
+                    <br><small><strong>CUPS:</strong> ${inv.cups || 'N/D'}</small>
+                    <br><small><strong>Suministro:</strong> ${inv.supplyAddress || 'N/D'}</small>
                     <br>Total: ${formatCurrency(inv.totalCalculated)} - Consumo: ${inv.consumption?.toFixed(2) || 0} kWh
                     <br><small style="color: #64748b;">Estado: ${inv._auditStatus || 'Procesado'}</small>
                 </div>
