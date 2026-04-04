@@ -1068,6 +1068,14 @@ async function processFiles(files) {
 
     for (const file of filesToProcess) {
         try {
+            const fileNameToken = normalizePdfToken(file.name || '');
+            const existingByName = [...invoices, ...dbInvoices].some(inv => normalizePdfToken(inv?.fileName || '') === fileNameToken);
+            if (existingByName) {
+                duplicateNotices.push(file.name || 'factura.pdf');
+                console.warn('[Dup] Factura duplicada por nombre, se omite carga:', file.name);
+                continue;
+            }
+
             console.log(`[Auditor] Analizando documento: ${file.name}`);
             cachePendingPdf({ fileName: file.name }, file);
             
@@ -1103,20 +1111,25 @@ async function processFiles(files) {
 
             console.log(`[Result] Datos extraídos:`, auditData);
             auditData.fileName = String(auditData.fileName || file.name || auditData.invoiceNum || 'factura.pdf').trim();
+
+            // Detección estricta de duplicado por claves de factura (invoiceNum + cups + periodo / fileName)
+            const existingByRecord = [...invoices, ...dbInvoices].some(inv => isSameInvoiceRecord(inv, auditData));
+            if (existingByRecord) {
+                duplicateNotices.push(auditData.invoiceNum || auditData.fileName || file.name);
+                console.warn('[Dup] Factura duplicada por claves de factura, se omite carga:', auditData.invoiceNum || auditData.fileName || file.name);
+                continue;
+            }
+
             auditData.invoicePreviewPages = invoicePreviewPages;
             auditData.invoicePreview = invoicePreviewPages[0] || null;
             auditData.invoicePreviewTotalPages = Number(pdf.numPages || 0);
             auditData.invoicePreviewRenderedPages = invoicePreviewPages.length;
             cachePendingPdf(auditData, file);
             await saveInvoicePdfToStore(auditData, file);
-            const currentUpsert = upsertInvoiceInList(invoices, auditData, false);
+            invoices.push(auditData);
 
             // Siempre guardar en historial local (incluidas rechazadas)
-            const dbUpsert = saveToDatabase([auditData]);
-            if (currentUpsert.updated || dbUpsert.updated > 0) {
-                duplicateNotices.push(auditData.invoiceNum || auditData.fileName || file.name);
-                console.log('[Dup] Factura duplicada detectada, se actualiza en vez de duplicar:', auditData.invoiceNum || auditData.fileName || file.name);
-            }
+            saveToDatabase([auditData]);
 
             // Solo sincronizar cloud si cumple la regla de peajes obligatorios
             if (hasMandatoryTolls) {
@@ -1143,7 +1156,7 @@ async function processFiles(files) {
 
     if (duplicateNotices.length > 0) {
         const uniqueDup = [...new Set(duplicateNotices)];
-        alert(`Se detectaron ${uniqueDup.length} factura(s) ya cargadas y se actualizaron sin duplicarlas:\n- ${uniqueDup.join('\n- ')}`);
+        alert(`Se detectaron ${uniqueDup.length} factura(s) ya cargadas y NO se volvieron a cargar:\n- ${uniqueDup.join('\n- ')}`);
     }
 
     const skippedBySize = oversized.length;
