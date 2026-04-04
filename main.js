@@ -406,8 +406,37 @@ function normalizeNameToken(value) {
         .trim();
 }
 
+function isInvalidClientNameCandidate(value) {
+    const raw = String(value || '').trim();
+    const norm = normalizeNameToken(raw);
+    if (!norm) return true;
+    if (norm.length < 4) return true;
+
+    const banned = new Set([
+        'nif', 'cif', 'dni', 'nie', 'cliente', 'titular', 'nombre',
+        'razon social', 'direccion', 'suministro', 'cups'
+    ]);
+    if (banned.has(norm)) return true;
+
+    // Evitar IDs y valores sin nombre real
+    if (/^[a-z]?\d{6,}[a-z]?$/i.test(raw.replace(/\s+/g, ''))) return true;
+
+    return false;
+}
+
 function detectClientNameFromText(text) {
     const raw = String(text || '');
+    const companyBeforeTaxId = raw.match(/([A-ZÁÉÍÓÚÜÑ0-9\s\.,\-]{4,120})\s+(?:NIF|CIF)\s*[:\-]?\s*[A-Z0-9]{5,}/i);
+    if (companyBeforeTaxId) {
+        const maybeName = String(companyBeforeTaxId[1] || '')
+            .replace(/^(?:cliente|titular|raz[oó]n\s+social)\s*[:\-]?\s*/i, '')
+            .trim()
+            .replace(/\s+/g, ' ');
+        if (!isInvalidClientNameCandidate(maybeName) && !/comercializadora|distribuidora|energ[ií]a/i.test(maybeName)) {
+            return maybeName.toUpperCase();
+        }
+    }
+
     const patterns = [
         /(?:cliente|titular|raz[oó]n\s+social|nombre\s+del\s+titular)\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i,
         /(?:datos\s+del\s+cliente)\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i
@@ -417,7 +446,7 @@ function detectClientNameFromText(text) {
         const m = raw.match(re);
         if (!m) continue;
         const name = String(m[1] || '').trim().replace(/\s+/g, ' ');
-        if (name && !/comercializadora|distribuidora|energ[ií]a/i.test(name)) {
+        if (!isInvalidClientNameCandidate(name) && !/comercializadora|distribuidora|energ[ií]a/i.test(name)) {
             return name.toUpperCase();
         }
     }
@@ -431,7 +460,7 @@ function resolveClientName(candidateName, comercializadora, text) {
     const candNorm = normalizeNameToken(candidate);
     const commNorm = normalizeNameToken(comm);
 
-    const missing = !candNorm || candNorm === 'desconocido' || candNorm === 'n d';
+    const missing = !candNorm || candNorm === 'desconocido' || candNorm === 'n d' || isInvalidClientNameCandidate(candidate);
     const sameAsCommercializer = candNorm && commNorm && candNorm === commNorm;
 
     if (missing || sameAsCommercializer) {
@@ -439,7 +468,7 @@ function resolveClientName(candidateName, comercializadora, text) {
         if (detected && detected !== 'Desconocido') return detected;
     }
 
-    return candidate || 'Desconocido';
+    return !isInvalidClientNameCandidate(candidate) ? candidate : 'Desconocido';
 }
 
 async function generatePdfPagePreviews(pdf, maxPages = 8) {
