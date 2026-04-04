@@ -910,14 +910,30 @@ async function runExtractionIA(text, fileName) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
                 engine: 'openai',
-                prompt: `Actúa como auditor energético. Extrae de este texto los siguientes campos en un JSON:
+                prompt: `Actúa como auditor energético experto en facturas españolas. Devuelve exclusivamente JSON válido.
+                Extrae estos campos:
                 invoiceNum, cups, period, clientName, supplyAddress, powerCost, energyCost, othersCost, alquiler, reactiveCost,
                 comercializadora, tariffType (2.0, 3.0 o 6.1), electricityTax, igicTax, ivaTax, total,
                 consumptionItems (array de 6 números P1..P6),
                 energyPeriodItems (array [{period,kwh,unitPriceKwh}]),
                 powerPeriodItems (array [{period,kw,unitPriceKw,days}]) donde days son los dias del periodo de facturacion,
-                tollPeriodItems (array [{period,kwh,unitPriceKwh}]) del bloque "coste de peajes de transporte, distribución y cargos".
-                Incluye only JSON válido, sin explicaciones extra.
+                tollPeriodItems (array [{period,kwh,unitPriceKwh}]).
+
+                Reglas obligatorias de separación:
+                1. energyPeriodItems debe contener SOLO energía comercializada del bloque "importe por energía consumida" o equivalente comercializador.
+                2. tollPeriodItems debe contener SOLO peajes y cargos de energía del bloque "coste de peajes de transporte, distribución y cargos" o equivalente.
+                3. Nunca mezcles peajes/cargos dentro de energyPeriodItems.
+                4. Nunca repitas un mismo periodo en energyPeriodItems con dos precios distintos. Si ves dos líneas P1/P2/P3 y una pertenece a peajes/cargos, esa debe ir a tollPeriodItems.
+                5. Si la factura muestra bajo "facturación por energía consumida (término variable)" dos subbloques separados, usa:
+                   - "importe por energía consumida" => energyPeriodItems
+                   - "coste de peajes de transporte, distribución y cargos" => tollPeriodItems
+                6. Si no encuentras peajes/cargos por periodo, devuelve tollPeriodItems: [].
+
+                Ejemplo correcto:
+                - energyPeriodItems: [{"period":"P1","kwh":138.01,"unitPriceKwh":0.230000}]
+                - tollPeriodItems: [{"period":"P1","kwh":138.01,"unitPriceKwh":0.097553}]
+
+                No incluyas explicaciones, texto adicional ni markdown. Solo JSON.
                 Texto: ${text.substring(0, 12000)}` 
             })
         });
