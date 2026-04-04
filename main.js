@@ -770,6 +770,24 @@ function shouldUseResidualTolls(inv, residualTolls = []) {
     return currentTotal > (energyRef + 0.5) && residualDiff + 0.5 < currentDiff;
 }
 
+function shouldBackfillResidualTolls(inv, residualTolls = []) {
+    if (!residualTolls.length) return false;
+
+    const energyItems = inv.energyPeriodItems || [];
+    const currentTolls = inv.tollPeriodItems || [];
+    const energyRef = Number(inv.energyCost || inv.breakdown?.energyCost || 0);
+    if (!energyItems.length || energyRef <= 0) return false;
+
+    const currentTotal = calculateEnergyWithTollsTotal(energyItems, currentTolls);
+    const residualTotal = calculateEnergyWithTollsTotal(energyItems, residualTolls);
+    const currentDiff = Math.abs(currentTotal - energyRef);
+    const residualDiff = Math.abs(residualTotal - energyRef);
+
+    // Caso simétrico al inflado: si el detalle de energía queda corto porque faltan
+    // peajes/cargos, usar el residual cuando mejore claramente el cuadre.
+    return currentTotal < (energyRef - 0.5) && residualDiff + 0.5 < currentDiff;
+}
+
 function sanitizeInvoiceForStorage(inv) {
     if (!inv || typeof inv !== 'object') return inv;
     const clone = { ...inv };
@@ -1030,6 +1048,9 @@ async function runExtractionIA(text, fileName) {
             } else if (shouldUseResidualTolls(inv, residualTolls)) {
                 inv.tollPeriodItems = residualTolls;
                 inv._tollPeriodsSource = 'residual-fallback-energy-total';
+            } else if (shouldBackfillResidualTolls(inv, residualTolls)) {
+                inv.tollPeriodItems = residualTolls;
+                inv._tollPeriodsSource = 'residual-backfill-missing-tolls';
             }
         } else {
             inv.tollPeriodItems = regexTolls;
@@ -1041,9 +1062,10 @@ async function runExtractionIA(text, fileName) {
                 inv._tollPeriodsSource = 'implied-from-energy-dedup';
             }
 
-            if ((inv.tollPeriodItems.length === 0 || shouldUseResidualTolls(inv, residualTolls)) && residualTolls.length > 0) {
+            const useResidualByMissing = shouldBackfillResidualTolls(inv, residualTolls);
+            if ((inv.tollPeriodItems.length === 0 || shouldUseResidualTolls(inv, residualTolls) || useResidualByMissing) && residualTolls.length > 0) {
                 inv.tollPeriodItems = residualTolls;
-                inv._tollPeriodsSource = 'residual-fallback-energy-total';
+                inv._tollPeriodsSource = useResidualByMissing ? 'residual-backfill-missing-tolls' : 'residual-fallback-energy-total';
             }
         }
 
