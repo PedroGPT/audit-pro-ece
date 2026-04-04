@@ -596,6 +596,58 @@ function extractTollPeriodItems(text) {
     return Object.values(byPeriod).sort((a, b) => a.period - b.period);
 }
 
+function extractSectionByPattern(text, startRegex, endRegex = null, maxLength = 2200) {
+    const raw = String(text || '');
+    const startMatch = raw.match(startRegex);
+    if (!startMatch || startMatch.index === undefined) return '';
+
+    const startIndex = startMatch.index;
+    const tail = raw.slice(startIndex, startIndex + maxLength);
+    if (!endRegex) return tail;
+
+    const endMatch = tail.slice(startMatch[0].length).match(endRegex);
+    if (!endMatch || endMatch.index === undefined) return tail;
+
+    return tail.slice(0, startMatch[0].length + endMatch.index);
+}
+
+function extractEnergyBlockText(text) {
+    return extractSectionByPattern(
+        text,
+        /facturaci[oó]n\s+por\s+energ[ií]a\s+consumida|importe\s+por\s+energ[ií]a\s+consumida/i,
+        /coste\s+de\s+peajes|alquiler|otros\s+conceptos|impuesto\s+de\s+electricidad|total\s+factura|informaci[oó]n\s+adicional/i,
+        1800
+    );
+}
+
+function extractTollBlockText(text) {
+    return extractSectionByPattern(
+        text,
+        /coste\s+de\s+peajes\s+de\s+transporte\s*,?\s*distribuci[oó]n\s+y\s+cargos?|peajes\s+de\s+transporte|peajes\s+y\s+cargos/i,
+        /alquiler|otros\s+conceptos|impuesto\s+de\s+electricidad|total\s+factura|informaci[oó]n\s+adicional/i,
+        1800
+    );
+}
+
+async function requestOpenAIJson(prompt) {
+    const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engine: 'openai', prompt })
+    });
+
+    if (!response.ok) throw new Error('La pasarela IA de Vercel no ha respondido.');
+
+    const data = await response.json();
+    let content = data.choices ? data.choices[0].message.content : data;
+    const raw = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+    const parsed = typeof content === 'string'
+        ? JSON.parse(content.replace(/```json\n?|```/g, '').trim())
+        : content;
+
+    return { parsed, raw };
+}
+
 function extractPowerPeriodItems(text) {
     const raw = String(text || '').replace(/×/g, '*').replace(/x/g, '*');
     const byPeriod = {};
@@ -923,19 +975,19 @@ async function processFiles(files) {
 
 async function runExtractionIA(text, fileName) {
     try {
-        const response = await fetch('/api/analyze', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                engine: 'openai',
-                prompt: `Actúa como auditor energético experto en facturas españolas. Devuelve exclusivamente JSON válido.
+        const energyBlockText = extractEnergyBlockText(text);
+        const tollBlockText = extractTollBlockText(text);
+
+        const { parsed: initialParsed, raw: rawOpenAIContent } = await requestOpenAIJson(
+            `Actúa como auditor energético experto en facturas españolas. Devuelve exclusivamente JSON válido.
                 Extrae estos campos:
                 invoiceNum, cups, period, clientName, supplyAddress, powerCost, energyCost, othersCost, alquiler, reactiveCost,
                 comercializadora, tariffType (2.0, 3.0 o 6.1), electricityTax, igicTax, ivaTax, total,
                 consumptionItems (array de 6 números P1..P6),
                 energyPeriodItems (array [{period,kwh,unitPriceKwh}]),
                 powerPeriodItems (array [{period,kw,unitPriceKw,days}]) donde days son los dias del periodo de facturacion,
-                tollPeriodItems (array [{period,kwh,unitPriceKwh}]).
+                tollPeriodItems (array [{period,kwh,unitPriceKwh}]),
+                energySourceLabel, tollSourceLabel.
 
                 Reglas obligatorias de separación:
                 1. energyPeriodItems debe contener SOLO energía comercializada del bloque "importe por energía consumida" o equivalente comercializador.
@@ -951,18 +1003,24 @@ async function runExtractionIA(text, fileName) {
                 - energyPeriodItems: [{"period":"P1","kwh":138.01,"unitPriceKwh":0.230000}]
                 - tollPeriodItems: [{"period":"P1","kwh":138.01,"unitPriceKwh":0.097553}]
 
-                No incluyas explicaciones, texto adicional ni markdown. Solo JSON.
-                Texto: ${text.substring(0, 12000)}` 
-            })
-        });
+                Si en la factura aparecen literalmente las palabras "peajes" o "cargos", debes localizar ese bloque y usarlo para tollPeriodItems.
+                tollSourceLabel debe devolver el encabezado exacto o casi exacto del bloque usado para peajes/cargos.
+                energySourceLabel debe devolver el encabezado exacto o casi exacto del bloque usado para energía comercializada.
 
-        if (!response.ok) throw new Error("La pasarela IA de Vercel no ha respondido.");
-        
-        const data = await response.json();
-        let content = data.choices ? data.choices[0].message.content : data;
-        const rawOpenAIContent = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-        let inv = typeof content === 'string' ? JSON.parse(content.replace(/```json\n?|```/g, '').trim()) : content;
+                Bloque de energía detectado localmente:
+                ${energyBlockText || 'NO DETECTADO'}
+
+                Bloque de peajes/cargos detectado localmente:
+                ${tollBlockText || 'NO DETECTADO'}
+
+                No incluyas explicaciones, texto adicional ni markdown. Solo JSON.
+                Texto completo: ${text.substring(0, 12000)}`
+        );
+
+        let inv = initialParsed;
         inv._rawOpenAIJSON = rawOpenAIContent;
+        inv.energySourceLabel = inv.energySourceLabel || '';
+        inv.tollSourceLabel = inv.tollSourceLabel || '';
 
         // Completar campos adicionales del JSON IA
         inv.invoiceNum = inv.invoiceNum || inv.factura || inv.invoice || 'S/N';
@@ -987,11 +1045,37 @@ async function runExtractionIA(text, fileName) {
             days: item.days || item.dias || item.numDays || null
         })).filter(item => item.period >= 1 && item.period <= 6);
 
-        const tollFromIA = (inv.tollPeriodItems || inv.tollsPeriodItems || inv.peajesPeriodItems || []).map(item => ({
+        let tollFromIA = (inv.tollPeriodItems || inv.tollsPeriodItems || inv.peajesPeriodItems || []).map(item => ({
             period: parsePeriodValue(item.period ?? item.periodo ?? item.p),
             kwh: firstPositiveNumber(item.kwh, item.consumption, item.consumo),
             unitPriceKwh: firstPositiveNumber(item.unitPriceKwh, item.unitPrice, item.priceKwh, item.price, item.peajePrice, item.precioPeaje, item.precio)
         })).filter(item => item.period >= 1 && item.period <= 6);
+
+        if (tollFromIA.length === 0 && tollBlockText && /peajes|cargos/i.test(tollBlockText)) {
+            try {
+                const { parsed: tollRetryParsed, raw: tollRetryRaw } = await requestOpenAIJson(
+                    `Extrae exclusivamente JSON válido con estos campos: tollPeriodItems, tollSourceLabel.
+                    Debes buscar SOLO en este bloque de la factura, que corresponde a peajes y cargos de energía.
+                    Si aparecen líneas P1..P6 con kWh y €/kWh, devuélvelas en tollPeriodItems.
+                    No confundas este bloque con energía comercializada.
+                    tollSourceLabel debe devolver el encabezado exacto o casi exacto del bloque.
+                    Bloque de peajes/cargos:
+                    ${tollBlockText}`
+                );
+                const focusedTolls = (tollRetryParsed.tollPeriodItems || []).map(item => ({
+                    period: parsePeriodValue(item.period ?? item.periodo ?? item.p),
+                    kwh: firstPositiveNumber(item.kwh, item.consumption, item.consumo),
+                    unitPriceKwh: firstPositiveNumber(item.unitPriceKwh, item.unitPrice, item.priceKwh, item.price, item.peajePrice, item.precioPeaje, item.precio)
+                })).filter(item => item.period >= 1 && item.period <= 6);
+                if (focusedTolls.length > 0) {
+                    tollFromIA = focusedTolls;
+                    inv.tollSourceLabel = tollRetryParsed.tollSourceLabel || inv.tollSourceLabel || '';
+                    inv._rawOpenAIJSON += `\n\n/* toll retry */\n${tollRetryRaw}`;
+                }
+            } catch (retryError) {
+                console.warn('[OpenAI] Reintento focalizado de peajes/cargos falló:', retryError);
+            }
+        }
 
         if (inv.energyPeriodItems.length === 0) {
             inv.energyPeriodItems = extractEnergyPeriodItems(text);
