@@ -465,10 +465,32 @@ function resolveClientName(candidateName, comercializadora, text) {
 
     if (missing || sameAsCommercializer) {
         const detected = detectClientNameFromText(text);
-        if (detected && detected !== 'Desconocido') return detected;
+        const detectedNorm = normalizeNameToken(detected);
+        const detectedIsCommercializer = detectedNorm && commNorm && detectedNorm === commNorm;
+        if (detected && detected !== 'Desconocido' && !detectedIsCommercializer) return detected;
     }
 
     return !isInvalidClientNameCandidate(candidate) ? candidate : 'Desconocido';
+}
+
+function resolveClientNameFromHistory(cups, comercializadora) {
+    const cupsKey = String(cups || '').trim().toUpperCase();
+    if (!cupsKey) return '';
+    const commNorm = normalizeNameToken(comercializadora || '');
+    const all = [...invoices, ...dbInvoices];
+
+    for (const inv of all) {
+        const invCups = String(inv?.cups || '').trim().toUpperCase();
+        if (!invCups || invCups !== cupsKey) continue;
+
+        const name = String(inv?.clientName || '').trim();
+        const nameNorm = normalizeNameToken(name);
+        if (!nameNorm || isInvalidClientNameCandidate(name)) continue;
+        if (commNorm && nameNorm === commNorm) continue;
+        return name;
+    }
+
+    return '';
 }
 
 async function generatePdfPagePreviews(pdf, maxPages = 8) {
@@ -1167,11 +1189,18 @@ async function runExtractionIA(text, fileName) {
         inv.invoiceNum = inv.invoiceNum || inv.factura || inv.invoice || 'S/N';
         inv.clientName = inv.clientName || inv.customerName || inv.cliente || 'Desconocido';
         inv.comercializadora = inv.comercializadora || inv.provider || inv.vendedor || inv.company || inv.distribuidora || inv.operador || detectComercializadoraFromText(text);
-        inv.clientName = resolveClientName(inv.clientName, inv.comercializadora, text);
         inv.tariffType = normalizeTariffTypeValue(inv.tariffType || inv.tarifa || inv.tariff || inv.tipoTarifa || detectTariffTypeFromText(text));
         inv.supplyAddress = inv.supplyAddress || inv.address || inv.direccion || 'N/D';
         inv.cups = inv.cups || inv.CUPS || 'N/D';
         inv.period = inv.period || inv.periodo || 'N/D';
+        inv.clientName = resolveClientName(inv.clientName, inv.comercializadora, text);
+        if (normalizeNameToken(inv.clientName) === normalizeNameToken(inv.comercializadora)) {
+            const historicalClient = resolveClientNameFromHistory(inv.cups, inv.comercializadora);
+            if (historicalClient) {
+                inv.clientName = historicalClient;
+                inv._clientNameSource = 'history-by-cups';
+            }
+        }
 
         // Si el modelo da items por periodo guardarlos
         inv.energyPeriodItems = assignSequentialPeriodsIfNeeded((inv.energyPeriodItems || []).map(item => ({
