@@ -43,6 +43,7 @@ const MAX_BATCH_INVOICES = 30;
 const MAX_PDF_SIZE_MB = 15;
 const INVOICE_FILES_DB_NAME = 'audit_pro_invoice_files';
 const INVOICE_FILES_STORE_NAME = 'files';
+const PDF_BUCKET_CANDIDATES = ['invoice-pdfs', 'Invoices-PDF', 'invoices-pdf'];
 
 // Mapa para mantener los objetos File en memoria para el visor de PDF
 window.pendingPdfFiles = new Map();
@@ -1350,34 +1351,50 @@ async function cloudLoadInvoices() {
 
 async function cloudSyncPdf(inv, file) {
     if (!supabaseClient || !file) return;
-    try {
-        const fileName = String(inv.fileName || file.name || 'factura.pdf');
-        const { error } = await supabaseClient.storage
-            .from('invoice-pdfs')
-            .upload(fileName, file, { upsert: true, contentType: 'application/pdf' });
-        if (error) throw error;
-        console.log("[CloudPDF] Subido:", fileName);
-    } catch (e) {
-        console.warn("[CloudPDF] Error upload:", e.message);
+    const fileName = String(inv.fileName || file.name || 'factura.pdf').trim();
+    let lastError = null;
+
+    for (const bucket of PDF_BUCKET_CANDIDATES) {
+        try {
+            const { error } = await supabaseClient.storage
+                .from(bucket)
+                .upload(fileName, file, { upsert: true, contentType: 'application/pdf' });
+            if (error) throw error;
+            console.log("[CloudPDF] Subido:", fileName, "bucket:", bucket);
+            return;
+        } catch (e) {
+            lastError = e;
+            console.warn("[CloudPDF] Error upload bucket", bucket + ":", e.message);
+        }
     }
+
+    console.warn("[CloudPDF] Upload fallido en todos los buckets para", fileName, lastError?.message || 'sin detalle');
 }
 
 async function cloudLoadPdf(inv) {
     if (!supabaseClient) return null;
-    try {
-        const fileName = String(inv.fileName || inv.invoiceNum || 'factura.pdf');
-        const { data, error } = await supabaseClient.storage
-            .from('invoice-pdfs')
-            .download(fileName);
-        if (error) throw error;
-        if (data) {
-            const file = new File([data], fileName, { type: 'application/pdf' });
-            cachePendingPdf(inv, file);
-            return file;
+    const fileName = String(inv.fileName || inv.invoiceNum || 'factura.pdf').trim();
+    let lastError = null;
+
+    for (const bucket of PDF_BUCKET_CANDIDATES) {
+        try {
+            const { data, error } = await supabaseClient.storage
+                .from(bucket)
+                .download(fileName);
+            if (error) throw error;
+            if (data) {
+                const file = new File([data], fileName, { type: 'application/pdf' });
+                cachePendingPdf(inv, file);
+                console.log("[CloudPDF] Descargado:", fileName, "bucket:", bucket);
+                return file;
+            }
+        } catch (e) {
+            lastError = e;
+            console.warn("[CloudPDF] Error download bucket", bucket + ":", e.message);
         }
-    } catch (e) {
-        console.warn("[CloudPDF] Error download:", e.message);
     }
+
+    console.warn("[CloudPDF] Download fallido en todos los buckets para", fileName, lastError?.message || 'sin detalle');
     return null;
 }
 
