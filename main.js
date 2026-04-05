@@ -2980,6 +2980,7 @@ window.addEventListener('click', (event) => {
 let compareCurrentInvoiceIndex = null;
 let compareSelectedCommercializers = [];
 let compareScope = 'single';
+let lastComparisonKey = '';
 
 function openCompareForInvoice(inv, fromIndex = null) {
     if (!inv) return;
@@ -3087,6 +3088,40 @@ function getShortSupplyAddress(address, maxLen = 48) {
 
 function getCompareInvoices(baseInvoice) {
     return getCompareInvoicesByScope(baseInvoice, compareScope);
+}
+
+function buildComparisonAttemptKey(baseInvoice, commercializerIds = [], scopeMode = 'single') {
+    const targets = getCompareInvoicesByScope(baseInvoice, scopeMode);
+    const supplyKeys = targets
+        .map(inv => buildSupplyKey(inv))
+        .filter(Boolean)
+        .sort();
+
+    const commKeys = (commercializerIds || [])
+        .map(id => String(id || '').trim())
+        .filter(Boolean)
+        .sort();
+
+    return `${scopeMode}|${commKeys.join(',')}|${supplyKeys.join(';')}`;
+}
+
+function findDuplicateProposalTargets(targets = [], comm = null) {
+    const proposed = normalizeProposalMatchToken(comm?.name || '');
+    if (!proposed) return [];
+
+    return targets.filter(inv => {
+        const targetKey = buildSupplyKey(inv);
+        return proposalsLog.some(p => {
+            const entryKey = buildSupplyKey({
+                clientName: p.clientName,
+                cups: p.cups,
+                tariffType: p.tariffType,
+                supplyAddress: p.supplyAddress
+            });
+            const entryProposed = normalizeProposalMatchToken(p.proposedCommercializer || '');
+            return entryKey === targetKey && entryProposed === proposed;
+        });
+    });
 }
 
 function getCompareInvoicesByScope(baseInvoice, scopeMode) {
@@ -4539,6 +4574,20 @@ function doSingleComparison() {
     const scopeEl = document.getElementById('compare-scope');
     compareScope = scopeEl ? scopeEl.value : 'single';
 
+    const baseInv = compareBaseInvoice || invoices[compareCurrentInvoiceIndex];
+    if (!baseInv) {
+        alert('No se encontró la factura base para comparar.');
+        return;
+    }
+
+    const comm = commercializers[selected[0]];
+    const comparisonKey = buildComparisonAttemptKey(baseInv, [comm?.id || selected[0]], compareScope);
+    if (comparisonKey === lastComparisonKey) {
+        alert('Ya tienes abierta esta misma comparativa. Cambia comercializadora o alcance para generar una nueva.');
+        return;
+    }
+    lastComparisonKey = comparisonKey;
+
     closeCompareSelectorModal();
     renderSingleComparison(compareCurrentInvoiceIndex, selected[0]);
 }
@@ -4557,6 +4606,20 @@ function doMultipleComparison() {
 
     const scopeEl = document.getElementById('compare-scope');
     compareScope = scopeEl ? scopeEl.value : 'single';
+
+    const baseInv = compareBaseInvoice || invoices[compareCurrentInvoiceIndex];
+    if (!baseInv) {
+        alert('No se encontró la factura base para comparar.');
+        return;
+    }
+
+    const commIds = selected.map(i => commercializers[i]?.id || i);
+    const comparisonKey = buildComparisonAttemptKey(baseInv, commIds, compareScope);
+    if (comparisonKey === lastComparisonKey) {
+        alert('Ya tienes abierta esta misma comparativa. Cambia comercializadoras o alcance para generar una nueva.');
+        return;
+    }
+    lastComparisonKey = comparisonKey;
 
     closeCompareSelectorModal();
     renderMultipleComparison(compareCurrentInvoiceIndex, selected);
@@ -4931,10 +4994,25 @@ function applyCommercializerProposal(invoiceIdx, commercializerIdx, scopeMode = 
         return;
     }
 
+    const duplicates = findDuplicateProposalTargets(targets, comm);
+    const duplicateKeys = new Set(duplicates.map(inv => buildSupplyKey(inv)));
+    const uniqueTargets = targets.filter(inv => !duplicateKeys.has(buildSupplyKey(inv)));
+
+    if (duplicates.length > 0 && uniqueTargets.length === 0) {
+        const duplicateList = duplicates.map(inv => `${inv.invoiceNum || 'S/N'} | ${inv.cups || 'N/D'}`);
+        alert(`Ya existe una propuesta con ${comm.name} para estos suministros. No se creó ninguna nueva:\n- ${[...new Set(duplicateList)].join('\n- ')}`);
+        return;
+    }
+
+    if (duplicates.length > 0) {
+        const duplicateList = duplicates.map(inv => `${inv.invoiceNum || 'S/N'} | ${inv.cups || 'N/D'}`);
+        alert(`Aviso: ${duplicates.length} suministro(s) ya tenían propuesta con ${comm.name} y se omitieron:\n- ${[...new Set(duplicateList)].join('\n- ')}\n\nSe aplicará solo en ${uniqueTargets.length} suministro(s) nuevos.`);
+    }
+
     const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const batchCreatedAt = new Date().toISOString();
 
-    targets.forEach(inv => {
+    uniqueTargets.forEach(inv => {
         const key = buildSupplyKey(inv);
         const metrics = computeInvoiceProposalMetrics(inv, comm);
         const simulation = buildInvoiceTransparencySimulation(inv, comm);
@@ -4951,7 +5029,7 @@ function applyCommercializerProposal(invoiceIdx, commercializerIdx, scopeMode = 
         proposalsLog.push({
             proposalId,
             batchId,
-            batchSupplyCount: targets.length,
+            batchSupplyCount: uniqueTargets.length,
             createdAt: batchCreatedAt,
             updatedAt: batchCreatedAt,
             status: 'propuesta',
@@ -4981,7 +5059,7 @@ function applyCommercializerProposal(invoiceIdx, commercializerIdx, scopeMode = 
     renderClients();
     renderProposals();
 
-    alert(`Propuesta aplicada: ${comm.name} en ${targets.length} suministro(s).`);
+    alert(`Propuesta aplicada: ${comm.name} en ${uniqueTargets.length} suministro(s).`);
 }
 
 async function openClientSupplyInvoice(rowIndex) {
