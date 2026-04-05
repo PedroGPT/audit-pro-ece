@@ -3674,7 +3674,7 @@ function buildReportHeaderHtml(title, subtitle = '') {
                     <div style="font-size:1rem; font-weight:700; color:#0f172a;">${cleanTitle}</div>
                     <div style="font-size:0.85rem; color:#64748b;">ECE Consultores${cleanSubtitle ? ` | ${cleanSubtitle}` : ''}</div>
                 </div>
-                <img src="logo.png" alt="Logo ECE Consultores" style="height:54px; width:auto; object-fit:contain;" onerror="this.style.display='none'">
+                <img src="${window.location.origin}/logo.png" alt="Logo ECE Consultores" style="height:54px; width:auto; object-fit:contain;" onerror="this.parentElement.style.display='none'">
             </div>
         </div>
     `;
@@ -3696,10 +3696,10 @@ function buildReportCoverHtml({ scopeLabel = '', currentCommercializerLabel = 'N
         <section class="card" style="padding:0.9rem; margin-bottom:1rem; border:1px solid #dbeafe; background:#f8fafc;">
             <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:1rem;">
                 <div>
-                    <img src="logo.png" alt="Logo ECE Consultores" style="height:54px; width:auto; object-fit:contain;" onerror="this.style.display='none'">
+                    <img src="${window.location.origin}/logo.png" alt="Logo ECE Consultores" style="height:54px; width:auto; object-fit:contain;" onerror="this.parentElement.style.display='none'">
                 </div>
                 <div style="flex:1;">
-                    <h1 style="margin:0; font-size:2rem; line-height:1.1; color:#0f172a;">Propuesta de Mejora de Precios</h1>
+                    <h1 style="margin:0; font-size:2rem; line-height:1.1; color:#0f172a;">Comparativa de Precios</h1>
                     <p style="margin:0.45rem 0 0; color:#475569; font-size:1rem; max-width:760px;">Se presenta una propuesta comparativa sobre la factura analizada, manteniendo la estructura real del suministro y recalculando el impacto económico estimado con una nueva oferta de precios.</p>
                 </div>
             </div>
@@ -4788,17 +4788,23 @@ function renderSingleComparison(invoiceIdx, commercializerIdx) {
         </tr>
     `).join('');
 
+    const currentCommercializers = [...new Set([inv.comercializadora].filter(Boolean))];
+    const currentCommercializerLabel = currentCommercializers.length > 0 ? currentCommercializers.join(' | ') : 'N/D';
+    const totals = {
+        oldTotal: metrics.oldTotalInvoice,
+        newTotal: metrics.newTotalInvoiceSim
+    };
+    const simulations = compareInvoices.map(i => buildInvoiceTransparencySimulation(i, comm));
+
     const html = `
-        ${buildReportHeaderHtml(`Comparativa con ${comm.name}`, scopeLabel)}
-        <h3>Comparativa con ${comm.name}</h3>
-        <p><strong>Cliente:</strong> ${inv.clientName || 'Desconocido'} | <strong>Tarifa:</strong> ${inv.tariffType || 'N/D'} | <strong>Alcance:</strong> ${scopeLabel}</p>
-        <div style="display:grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap:0.75rem; margin:0.75rem 0 1rem;">
-            <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Precio energia actual</div><div style="font-size:1.1rem; font-weight:700;">${metrics.oldAvgPrice.toFixed(6)} €/kWh</div></div>
-            <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Precio energia propuesta</div><div style="font-size:1.1rem; font-weight:700;">${metrics.newAvgPrice.toFixed(6)} €/kWh</div></div>
-            <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Ahorro energia</div><div style="font-size:1.1rem; font-weight:700; color:${metrics.energySaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(metrics.energySaving)}</div></div>
-            <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Factura simulada</div><div style="font-size:1.1rem; font-weight:700;">${formatCurrency(metrics.newTotalInvoiceSim)}</div></div>
-        </div>
-        <p style="color:#64748b; margin:0 0 0.75rem;">La vista rápida prioriza energía; usa "Ver comparativa de precios" para revisar también impacto de potencia, impuestos y total final antes/después.</p>
+        ${buildReportCoverHtml({
+            scopeLabel,
+            currentCommercializerLabel,
+            proposedCommercializer: comm.name,
+            totals,
+            simulations
+        })}
+        <p style="color:#64748b; margin:1rem 0 0.75rem;">La vista rápida prioriza energía; usa "Ver comparativa de precios" para revisar también impacto de potencia, impuestos y total final antes/después.</p>
         <div style="margin-bottom:0.75rem;">
             <button class="btn primary" onclick="applyCommercializerProposal(${invoiceIdx}, ${commercializerIdx}, '${compareScope}')">Aplicar propuesta: ${comm.name}</button>
             <button class="btn secondary" onclick="openComparisonTransparencyModal(${invoiceIdx}, ${commercializerIdx}, '${compareScope}')" style="margin-left:0.5rem;">Ver comparativa de precios</button>
