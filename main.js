@@ -4753,7 +4753,7 @@ function openStoredProposalReport(proposalRef) {
             simulations
         })}
         ${involvedSuppliesCard}
-        ${detailedBlocks}
+        ${blocks}
     `;
 
     modalGuardUntil.compareTransparency = Date.now() + 250;
