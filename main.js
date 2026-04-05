@@ -506,10 +506,12 @@ function isInvalidClientNameCandidate(value) {
 
 function detectClientNameFromText(text) {
     const raw = String(text || '');
-    const taxIdMatches = [...raw.matchAll(/([A-ZÁÉÍÓÚÜÑ0-9\s\.,\-]{4,120})\s+(?:NIF|CIF)\s*[:\-]?\s*[A-Z0-9]{5,}/gi)];
+
+    // Estrategia 1: buscar nombre antes de NIF/CIF/DNI/NIE en la misma línea
+    const taxIdMatches = [...raw.matchAll(/([A-ZÁÉÍÓÚÜÑ0-9\s\.,\-]{4,120})\s+(?:NIF|CIF|DNI|NIE)\s*[:\-]?\s*[A-Z0-9]{5,}/gi)];
     for (const m of taxIdMatches) {
         const maybeName = String(m?.[1] || '')
-            .replace(/^(?:cliente|titular|raz[oó]n\s+social|comercializadora|distribuidora)\s*[:\-]?\s*/i, '')
+            .replace(/^(?:cliente|titular|raz[oó]n\s+social|nombre|comercializadora|distribuidora)\s*[:\-]?\s*/i, '')
             .trim()
             .replace(/\s+/g, ' ');
         if (!isInvalidClientNameCandidate(maybeName) && !/comercializadora|distribuidora|energ[ií]a/i.test(maybeName)) {
@@ -517,17 +519,36 @@ function detectClientNameFromText(text) {
         }
     }
 
+    // Estrategia 2: etiquetas habituales en facturas españolas
     const patterns = [
-        /(?:cliente|titular|raz[oó]n\s+social|nombre\s+del\s+titular)\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i,
-        /(?:datos\s+del\s+cliente)\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i
+        /(?:nombre\s+(?:y\s+apellidos|del\s+titular|del\s+cliente|titular))\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i,
+        /(?:raz[oó]n\s+social)\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i,
+        /(?:titular\s+(?:del\s+contrato|del\s+suministro))\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i,
+        /(?:cliente|titular)\s*[:\-]\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i,
+        /(?:datos\s+del\s+(?:cliente|titular|contrato))\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i,
+        /(?:a\s+nombre\s+de)\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i,
+        /(?:nombre)\s*[:\-]\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i
     ];
+
+    const bannedInName = /comercializadora|distribuidora|energ[ií]a|electricidad|factura|suministro|direcci[oó]n|periodo|cups/i;
 
     for (const re of patterns) {
         const m = raw.match(re);
         if (!m) continue;
-        const name = String(m[1] || '').trim().replace(/\s+/g, ' ');
-        if (!isInvalidClientNameCandidate(name) && !/comercializadora|distribuidora|energ[ií]a/i.test(name)) {
+        const name = String(m[1] || '').split(/\n/)[0].trim().replace(/\s+/g, ' ');
+        if (!isInvalidClientNameCandidate(name) && !bannedInName.test(name)) {
             return name.toUpperCase();
+        }
+    }
+
+    // Estrategia 3: NIF/CIF aparece en línea propia — la línea inmediatamente anterior podría ser el nombre
+    const lines = raw.split(/\n/);
+    for (let i = 1; i < lines.length; i++) {
+        if (/(?:NIF|CIF|DNI|NIE)\s*[:\-]?\s*[A-Z0-9]{5,}/i.test(lines[i])) {
+            const prevLine = String(lines[i - 1] || '').trim().replace(/\s+/g, ' ');
+            if (!isInvalidClientNameCandidate(prevLine) && !bannedInName.test(prevLine)) {
+                return prevLine.toUpperCase();
+            }
         }
     }
 
@@ -605,7 +626,7 @@ async function generatePdfPagePreviews(pdf, maxPages = 8) {
 
         for (let i = 1; i <= pagesToRender; i++) {
             const page = await pdf.getPage(i);
-            const viewport = page.getViewport({ scale: 1.4 });
+            const viewport = page.getViewport({ scale: 2.0 });
             const canvas = document.createElement('canvas');
             const context = canvas.getContext('2d');
             canvas.width = Math.floor(viewport.width);
@@ -1217,7 +1238,7 @@ async function processFiles(files) {
 
             // Comprimir todas las páginas a JPEG para persistir en localStorage sin exceder el límite
             const compressedPages = await Promise.all(
-                invoicePreviewPages.map(p => compressPngToJpegThumbnail(p, 0.60, 0.55))
+                invoicePreviewPages.map(p => compressPngToJpegThumbnail(p, 0.84, 0.90))
             ).then(pages => pages.filter(Boolean));
             auditData.invoicePreviewPages = compressedPages;
             auditData.invoicePreview = compressedPages[0] || null;  // thumbnail para cloud
@@ -1286,6 +1307,12 @@ async function runExtractionIA(text, fileName) {
                 powerPeriodItems (array [{period,kw,unitPriceKw,days}]) donde days son los dias del periodo de facturacion,
                 tollPeriodItems (array [{period,kwh,unitPriceKwh}]),
                 energySourceLabel, tollSourceLabel.
+
+                IMPORTANTE para clientName: Es el nombre o razón social del CLIENTE/TITULAR, NO de la comercializadora ni distribuidora.
+                Búscalo bajo etiquetas como: "Cliente:", "Titular:", "Nombre:", "Razón Social:", "Nombre del titular:", "Titular del contrato:", "Datos del cliente:", "A nombre de:".
+                También puede aparecer justo antes de "NIF", "CIF", "DNI" o "NIE" del cliente.
+                Si no puedes identificarlo con certeza, devuelve clientName: "".
+                Nunca pongas el nombre de la comercializadora como clientName.
 
                 Reglas obligatorias de separación:
                 1. energyPeriodItems debe contener SOLO energía comercializada del bloque "importe por energía consumida" o equivalente comercializador.
