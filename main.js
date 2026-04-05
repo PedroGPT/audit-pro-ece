@@ -5290,7 +5290,12 @@ async function openClientSupplyInvoice(rowIndex) {
     } else if (inv.invoicePreview) {
         viewerHtml = `<img src="${inv.invoicePreview}" alt="Preview factura" style="width:100%; max-width:980px; border:1px solid #e2e8f0; border-radius:8px; display:block;">`;
     } else {
-        viewerHtml = '<div class="card" style="padding:1rem;">No hay PDF disponible para esta factura. Si la acabas de cargar, vuelve a procesarla para guardarla de forma persistente.</div>';
+        viewerHtml = `
+            <div class="card" style="padding:1rem;">
+                <p style="margin:0 0 0.75rem;">No hay PDF disponible para esta factura.</p>
+                <button class="btn secondary" onclick="repairClientSupplyPdf(${rowIndex})">Reparar PDF</button>
+            </div>
+        `;
     }
 
     body.innerHTML = `
@@ -5318,6 +5323,48 @@ async function openClientSupplyInvoice(rowIndex) {
             });
         }
     }
+}
+
+async function repairClientSupplyPdf(rowIndex) {
+    const row = clientSupplyRows[rowIndex];
+    const inv = row?.invoice;
+    if (!inv) {
+        alert('No hay factura asociada disponible para reparar.');
+        return;
+    }
+
+    const aliases = [inv]
+        .concat(invoices.filter(item => isSameInvoiceRecord(item, inv)))
+        .concat(dbInvoices.filter(item => isSameInvoiceRecord(item, inv)));
+
+    const uniqueAliases = [];
+    aliases.forEach((item) => {
+        if (!item) return;
+        const already = uniqueAliases.some(existing => isSameInvoiceRecord(existing, item));
+        if (!already) uniqueAliases.push(item);
+    });
+
+    let repairedFile = null;
+    for (const candidate of uniqueAliases) {
+        repairedFile = getPendingPdfFromMemory(candidate);
+        if (!repairedFile) repairedFile = await loadInvoicePdfFromStore(candidate);
+        if (!repairedFile) repairedFile = await cloudLoadPdf(candidate);
+        if (repairedFile) break;
+    }
+
+    if (!repairedFile) {
+        alert('No se pudo recuperar el PDF. Si no existe en local ni en cloud, hay que volver a subir esa factura.');
+        return;
+    }
+
+    cachePendingPdf(inv, repairedFile);
+    await saveInvoicePdfToStore(inv, repairedFile);
+    cloudSyncPdf(inv, repairedFile).catch(err => {
+        console.warn('[CloudPDF] No se pudo resincronizar tras reparacion manual:', err?.message || err);
+    });
+
+    alert('PDF recuperado correctamente.');
+    await openClientSupplyInvoice(rowIndex);
 }
 
 async function openClientSupplyPdfOriginal(rowIndex) {
@@ -5617,6 +5664,7 @@ window.addEventListener('click', (event) => {
 // Exponer funciones globales para onclick handlers
 window.openDetailModalFromHistory = openDetailModalFromHistory;
 window.openClientSupplyInvoice = openClientSupplyInvoice;
+window.repairClientSupplyPdf = repairClientSupplyPdf;
 window.openClientSupplyPdfOriginal = openClientSupplyPdfOriginal;
 window.openClientSupplyAuditModal = openClientSupplyAuditModal;
 window.toggleAuditCorrections = toggleAuditCorrections;
