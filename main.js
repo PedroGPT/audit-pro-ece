@@ -1821,6 +1821,43 @@ function buildPdfCloudNameCandidates(inv = {}, file = null) {
     return [...new Set(names.filter(Boolean))];
 }
 
+function normalizePdfNameToken(value) {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/\.pdf$/i, '')
+        .replace(/[^a-z0-9]/g, '');
+}
+
+function pickBestCloudPdfName(fileEntries = [], inv = {}, candidateNames = []) {
+    const invNumNorm = normalizePdfNameToken(inv.invoiceNum || '');
+    const fileNorm = normalizePdfNameToken(inv.fileName || '');
+    const cupsNorm = normalizePdfNameToken(inv.cups || '');
+    const candidateNorms = new Set((candidateNames || []).map(normalizePdfNameToken).filter(Boolean));
+
+    let best = null;
+    let bestScore = -1;
+
+    (fileEntries || []).forEach(entry => {
+        const name = String(entry?.name || '').trim();
+        if (!name) return;
+        const n = normalizePdfNameToken(name);
+        if (!n) return;
+
+        let score = 0;
+        if (candidateNorms.has(n)) score += 100;
+        if (invNumNorm && n.includes(invNumNorm)) score += 40;
+        if (fileNorm && n.includes(fileNorm)) score += 25;
+        if (cupsNorm && cupsNorm.length >= 6 && n.includes(cupsNorm.slice(-6))) score += 10;
+
+        if (score > bestScore) {
+            bestScore = score;
+            best = name;
+        }
+    });
+
+    return bestScore > 0 ? best : '';
+}
+
 async function cloudSyncPdf(inv, file) {
     if (!supabaseClient || !file) return;
     const fileNames = buildPdfCloudNameCandidates(inv, file);
@@ -1870,6 +1907,33 @@ async function cloudLoadPdf(inv) {
                 lastError = e;
                 console.warn("[CloudPDF] Error download bucket", bucket + ":", e.message);
             }
+        }
+    }
+
+    // Fallback: buscar un nombre similar en el bucket (facturas antiguas o guardadas con otro alias)
+    for (const bucket of PDF_BUCKET_CANDIDATES) {
+        try {
+            const { data: files, error: listError } = await supabaseClient.storage
+                .from(bucket)
+                .list('', { limit: 200, offset: 0, sortBy: { column: 'name', order: 'asc' } });
+            if (listError) throw listError;
+
+            const bestName = pickBestCloudPdfName(files || [], inv, fileNames);
+            if (!bestName) continue;
+
+            const { data, error } = await supabaseClient.storage
+                .from(bucket)
+                .download(bestName);
+            if (error) throw error;
+            if (data) {
+                const file = new File([data], bestName, { type: 'application/pdf' });
+                cachePendingPdf(inv, file);
+                console.log("[CloudPDF] Descargado por fallback:", bestName, "bucket:", bucket);
+                return file;
+            }
+        } catch (e) {
+            lastError = e;
+            console.warn("[CloudPDF] Error fallback download bucket", bucket + ":", e.message);
         }
     }
 
