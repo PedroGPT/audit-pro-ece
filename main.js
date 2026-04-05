@@ -297,8 +297,20 @@ async function initApp() {
         supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         console.log("Supabase Cloud Sync: CONNECTED ✓");
     }
+
+    // Cargar estado local inmediato para que la UI arranque rápida.
     loadLocalStore();
+    loadSupplyProposals();
+    loadProposalsLog();
+    loadCommercializers();
+
+    // Rehidratar desde cloud para estado consistente entre dispositivos/deployments.
     await cloudLoadInvoices();
+    await cloudLoadAppState();
+
+    renderHistory();
+    renderClients();
+    renderProposals();
 }
 
 function switchView(viewId) {
@@ -634,6 +646,7 @@ function loadSupplyProposals() {
 
 function saveSupplyProposals() {
     localStorage.setItem('audit_pro_supply_proposals', JSON.stringify(supplyProposals));
+    cloudSaveAppState('supplyProposals', supplyProposals);
 }
 
 function loadProposalsLog() {
@@ -647,6 +660,7 @@ function loadProposalsLog() {
 
 function saveProposalsLog() {
     localStorage.setItem('audit_pro_proposals_log', JSON.stringify(proposalsLog));
+    cloudSaveAppState('proposalsLog', proposalsLog);
 }
 
 function getProposalStatusOptions() {
@@ -1698,6 +1712,64 @@ async function cloudLoadInvoices() {
         }
     } catch (e) {
         console.warn("[Cloud] Error load:", e.message);
+    }
+}
+
+async function cloudSaveAppState(key, value) {
+    if (!supabaseClient) return { ok: false, skipped: true, message: 'Sin cliente Supabase' };
+    try {
+        const { error } = await supabaseClient
+            .from('app_settings')
+            .upsert([
+                {
+                    key,
+                    value,
+                    updated_at: new Date().toISOString()
+                }
+            ], { onConflict: 'key' });
+        if (error) throw error;
+        return { ok: true, skipped: false, message: 'OK' };
+    } catch (err) {
+        console.warn(`[CloudState] No se pudo guardar ${key} en cloud:`, err?.message || err);
+        return { ok: false, skipped: false, message: String(err?.message || err || 'Error desconocido') };
+    }
+}
+
+async function cloudLoadAppState() {
+    if (!supabaseClient) return;
+    try {
+        const keys = ['commercializers', 'supplyProposals', 'proposalsLog'];
+        const { data, error } = await supabaseClient
+            .from('app_settings')
+            .select('key,value')
+            .in('key', keys);
+        if (error) throw error;
+
+        const byKey = new Map((data || []).map(row => [String(row.key || ''), row.value]));
+
+        const cloudCommercializers = byKey.get('commercializers');
+        if (Array.isArray(cloudCommercializers)) {
+            commercializers = cloudCommercializers;
+            localStorage.setItem('audit_pro_commercializers', JSON.stringify(commercializers));
+            renderCommercializersList();
+            console.log('[CloudState] Comercializadoras cargadas desde cloud:', commercializers.length);
+        }
+
+        const cloudSupplyProposals = byKey.get('supplyProposals');
+        if (cloudSupplyProposals && typeof cloudSupplyProposals === 'object' && !Array.isArray(cloudSupplyProposals)) {
+            supplyProposals = cloudSupplyProposals;
+            localStorage.setItem('audit_pro_supply_proposals', JSON.stringify(supplyProposals));
+            console.log('[CloudState] Propuestas por suministro cargadas desde cloud:', Object.keys(supplyProposals).length);
+        }
+
+        const cloudProposalsLog = byKey.get('proposalsLog');
+        if (Array.isArray(cloudProposalsLog)) {
+            proposalsLog = cloudProposalsLog;
+            localStorage.setItem('audit_pro_proposals_log', JSON.stringify(proposalsLog));
+            console.log('[CloudState] Log de propuestas cargado desde cloud:', proposalsLog.length);
+        }
+    } catch (err) {
+        console.warn('[CloudState] No se pudo cargar estado funcional desde cloud:', err?.message || err);
     }
 }
 
@@ -4529,8 +4601,6 @@ function closeClientSupplyInvoiceModal() {
 // ========================================================================
 document.addEventListener('DOMContentLoaded', () => {
     initApp();
-    loadSupplyProposals();
-    loadProposalsLog();
 
     // Botones de navegación
     document.querySelectorAll('.nav-item').forEach(btn => {
@@ -4551,7 +4621,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderProposals();
 
     // Cargar Comercializadoras
-    loadCommercializers();
+    renderCommercializersList();
 });
 
 // ========================================================================
@@ -4571,6 +4641,7 @@ function loadCommercializers() {
 function saveCommercializersToStorage() {
     localStorage.setItem('audit_pro_commercializers', JSON.stringify(commercializers));
     console.log('[Commercializers] Guardadas en localStorage');
+    cloudSaveAppState('commercializers', commercializers);
 }
 
 function renderCommercializersList() {
