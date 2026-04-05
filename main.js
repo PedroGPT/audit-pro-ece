@@ -5268,6 +5268,9 @@ async function openClientSupplyInvoice(rowIndex) {
     const inv = row.invoice;
     const file = await getInvoicePdfFile(inv);
     let viewerHtml = '';
+    const repairPdfAction = !file
+        ? `<div class="card" style="padding:0.75rem; margin-bottom:0.75rem;"><button class="btn secondary" onclick="repairClientSupplyPdf(${rowIndex})">Reparar PDF</button></div>`
+        : '';
 
     if (Array.isArray(inv.invoicePreviewPages) && inv.invoicePreviewPages.length > 0) {
         const pagesHtml = inv.invoicePreviewPages.map((img, idx) => `
@@ -5284,11 +5287,11 @@ async function openClientSupplyInvoice(rowIndex) {
         const fullPdfAction = file
             ? `<div class="card" style="padding:0.75rem; margin-bottom:0.75rem;"><button class="btn secondary" onclick="openClientSupplyPdfOriginal(${rowIndex})">Abrir PDF original completo</button></div>`
             : '';
-        viewerHtml = `${fullPdfAction}${note}${pagesHtml}`;
+        viewerHtml = `${fullPdfAction}${repairPdfAction}${note}${pagesHtml}`;
     } else if (file) {
         viewerHtml = '<div id="client-pdf-pages" class="card" style="padding:0.75rem; min-height: 280px;">Cargando factura completa...</div>';
     } else if (inv.invoicePreview) {
-        viewerHtml = `<img src="${inv.invoicePreview}" alt="Preview factura" style="width:100%; max-width:980px; border:1px solid #e2e8f0; border-radius:8px; display:block;">`;
+        viewerHtml = `${repairPdfAction}<img src="${inv.invoicePreview}" alt="Preview factura" style="width:100%; max-width:980px; border:1px solid #e2e8f0; border-radius:8px; display:block;">`;
     } else {
         viewerHtml = `
             <div class="card" style="padding:1rem;">
