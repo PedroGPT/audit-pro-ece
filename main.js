@@ -3712,14 +3712,18 @@ function buildReportCoverHtml({ scopeLabel = '', currentCommercializerLabel = 'N
     const savingPct = currentTotal > 0 ? (savingTotal / currentTotal) * 100 : 0;
 
     return `
-        <section class="card" style="padding:0.9rem; margin-bottom:1rem; border:1px solid #dbeafe; background:#f8fafc;">
+        <section class="card" style="padding:1rem; margin-bottom:1rem; border:1px solid #c7d8ee; background:linear-gradient(180deg, #f0f7ff 0%, #f8fafc 62%, #ffffff 100%); box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);">
             <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:1rem;">
                 <div style="min-width:80px;">
                     <img src="${window.location.origin}/logo.png" alt="Logo ECE Consultores" crossorigin="anonymous" style="height:70px; width:auto; object-fit:contain; max-width:200px;" onerror="this.style.display='none'">
                 </div>
                 <div style="flex:1;">
-                    <h1 style="margin:0; font-size:2rem; line-height:1.1; color:#0f172a;">Comparativa de Precios</h1>
-                    <p style="margin:0.45rem 0 0; color:#475569; font-size:1rem; max-width:760px;">Se presenta una propuesta comparativa sobre la factura analizada, manteniendo la estructura real del suministro y recalculando el impacto económico estimado con una nueva oferta de precios.</p>
+                    <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.35rem;">
+                        <span style="display:inline-block; padding:0.25rem 0.55rem; border:1px solid #93c5fd; border-radius:999px; background:#eff6ff; color:#1d4ed8; font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;">${scopeLabel || 'Suministro individual'}</span>
+                        <span style="display:inline-block; padding:0.25rem 0.55rem; border:1px solid #cbd5e1; border-radius:999px; background:#f8fafc; color:#334155; font-size:0.72rem; font-weight:700;">Emitido: ${generatedAt}</span>
+                    </div>
+                    <h1 style="margin:0; font-size:2.05rem; line-height:1.08; color:#0f172a; letter-spacing:-0.01em;">Comparativa de Precios</h1>
+                    <p style="margin:0.45rem 0 0; color:#334155; font-size:1rem; max-width:760px;">Evaluacion economica de la factura actual frente a la oferta propuesta, conservando estructura de consumo real y mostrando impacto mensual estimado.</p>
                 </div>
             </div>
 
@@ -3937,78 +3941,59 @@ function closeComparisonTransparencyModal() {
     if (modal) modal.classList.add('hidden');
 }
 
-function openComparisonTransparencyPrintView() {
-    const source = document.getElementById('comparison-transparency-body');
-    if (!source || !String(source.innerHTML || '').trim()) {
-        alert('No hay contenido de informe para imprimir.');
-        return;
-    }
-
-    const printWindow = window.open('', '_blank', 'noopener,noreferrer');
-    if (!printWindow) {
-        alert('El navegador bloqueo la ventana emergente. Permite popups para abrir la vista de impresion.');
-        return;
-    }
-
-    const logoUrl = `${window.location.origin}/logo.png`;
-    const reportHtml = String(source.innerHTML || '').replace(/src="\/logo\.png"/g, `src="${logoUrl}"`);
-
-    // Asegurar que el logo se carga correctamente en la ventana de impresión
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = reportHtml;
-    const logoImgs = tempDiv.querySelectorAll('img[alt="Logo ECE Consultores"]');
-    logoImgs.forEach(img => {
-        img.setAttribute('crossorigin', 'anonymous');
-        img.setAttribute('src', logoUrl);
-    });
-    const finalReportHtml = tempDiv.innerHTML;
-
-    printWindow.document.open();
-    printWindow.document.write(`
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Comparativa de Precios</title>
-    <style>
-        @page {
-            size: A4;
-            margin: 12mm;
-        }
-        * {
-            box-sizing: border-box;
-        }
+function getComparisonReportExportStyles({ forPrint = false } = {}) {
+    return `
+        ${forPrint ? '@page { size: A4; margin: 10mm; }' : ''}
+        * { box-sizing: border-box; }
         body {
             margin: 0;
+            padding: ${forPrint ? '0' : '16px'};
             color: #0f172a;
-            background: #ffffff;
+            background: #f5f8fc;
             font-family: "Segoe UI", Tahoma, Arial, sans-serif;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
         }
-        .print-wrap {
+        .report-wrap {
             width: 100%;
+            max-width: 1080px;
+            margin: 0 auto;
         }
         .card {
             border: 1px solid #dbe3ef;
-            border-radius: 8px;
+            border-radius: 10px;
             padding: 10px;
             margin-bottom: 10px;
-            page-break-inside: avoid;
-            break-inside: avoid-page;
+            background: #ffffff;
             overflow: visible;
         }
+        .pdf-avoid-break,
+        .card,
         h2, h3, h4, p {
-            margin-top: 0;
-            page-break-after: avoid;
-            break-after: avoid-page;
+            page-break-inside: avoid;
+            break-inside: avoid-page;
+        }
+        .pdf-break-before {
+            page-break-before: always;
+            break-before: page;
         }
         .modal-table {
             width: 100%;
             border-collapse: collapse;
             table-layout: fixed;
             margin-top: 6px;
+            page-break-inside: auto;
+            break-inside: auto;
+        }
+        .modal-table thead {
+            display: table-header-group;
+        }
+        .modal-table tfoot {
+            display: table-footer-group;
+        }
+        .modal-table tr {
+            page-break-inside: avoid;
+            break-inside: avoid;
         }
         .modal-table th,
         .modal-table td {
@@ -4028,10 +4013,77 @@ function openComparisonTransparencyPrintView() {
             max-width: 100%;
             height: auto;
         }
-    </style>
+        .report-logo {
+            display: inline-block;
+            max-height: 70px;
+            width: auto;
+        }
+    `;
+}
+
+async function resolveComparisonReportLogoSrc() {
+    const logoUrl = `${window.location.origin}/logo.png`;
+    try {
+        const resp = await fetch(logoUrl, { cache: 'no-store' });
+        if (!resp.ok) return logoUrl;
+        const blob = await resp.blob();
+        return await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || logoUrl));
+            reader.onerror = () => resolve(logoUrl);
+            reader.readAsDataURL(blob);
+        });
+    } catch (err) {
+        console.warn('[Report] No se pudo embebir el logo, se usara URL absoluta:', err);
+        return logoUrl;
+    }
+}
+
+function normalizeComparisonReportHtml(sourceHtml, logoSrc) {
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = String(sourceHtml || '')
+        .replace(/src="logo\.png"/g, `src="${logoSrc}"`)
+        .replace(/src="\/logo\.png"/g, `src="${logoSrc}"`);
+
+    const logoImgs = tempDiv.querySelectorAll('img[alt="Logo ECE Consultores"]');
+    logoImgs.forEach((img) => {
+        img.setAttribute('src', logoSrc);
+        img.setAttribute('crossorigin', 'anonymous');
+        img.classList.add('report-logo');
+    });
+
+    return tempDiv.innerHTML;
+}
+
+async function openComparisonTransparencyPrintView() {
+    const source = document.getElementById('comparison-transparency-body');
+    if (!source || !String(source.innerHTML || '').trim()) {
+        alert('No hay contenido de informe para imprimir.');
+        return;
+    }
+
+    const printWindow = window.open('', '_blank', 'noopener,noreferrer');
+    if (!printWindow) {
+        alert('El navegador bloqueo la ventana emergente. Permite popups para abrir la vista de impresion.');
+        return;
+    }
+
+    const logoSrc = await resolveComparisonReportLogoSrc();
+    const finalReportHtml = normalizeComparisonReportHtml(source.innerHTML, logoSrc);
+    const styles = getComparisonReportExportStyles({ forPrint: true });
+
+    printWindow.document.open();
+    printWindow.document.write(`
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comparativa de Precios</title>
+    <style>${styles}</style>
 </head>
 <body>
-    <div class="print-wrap">${reportHtml}</div>
+    <div class="report-wrap">${finalReportHtml}</div>
 </body>
 </html>
     `);
@@ -4055,78 +4107,26 @@ async function downloadComparisonTransparencyHtml() {
         .replace(/\s+/g, '-')
         .toLowerCase() || 'cliente';
 
-    let logoSrc = `${window.location.origin}/logo.png`;
-    try {
-        const resp = await fetch(logoSrc);
-        if (resp.ok) {
-            const blob = await resp.blob();
-            logoSrc = await new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(String(reader.result || ''));
-                reader.onerror = () => resolve(logoSrc);
-                reader.readAsDataURL(blob);
-            });
-        }
-    } catch (err) {
-        console.warn('[HTML] No se pudo embebir el logo, se usara URL absoluta:', err);
-    }
-
-    const reportHtml = String(source.innerHTML || '')
-        .replace(/src="logo\.png"/g, `src="${logoSrc}"`)
-        .replace(/src="\/logo\.png"/g, `src="${logoSrc}"`);
+    const logoSrc = await resolveComparisonReportLogoSrc();
+    const reportHtml = normalizeComparisonReportHtml(source.innerHTML, logoSrc);
+    const styles = getComparisonReportExportStyles({ forPrint: false });
 
     const exportHtml = `<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Propuesta de Mejora de Precios - ${clientName}</title>
-    <style>
-        * { box-sizing: border-box; }
-        body {
-            margin: 0;
-            padding: 18px;
-            color: #0f172a;
-            background: #ffffff;
-            font-family: "Segoe UI", Tahoma, Arial, sans-serif;
-        }
-        .card {
-            border: 1px solid #dbe3ef;
-            border-radius: 8px;
-            padding: 10px;
-            margin-bottom: 10px;
-            overflow: visible;
-        }
-        .modal-table {
-            width: 100%;
-            border-collapse: collapse;
-            table-layout: fixed;
-        }
-        .modal-table th,
-        .modal-table td {
-            border: 1px solid #dbe3ef;
-            padding: 7px;
-            font-size: 12px;
-            line-height: 1.35;
-            vertical-align: top;
-            white-space: normal;
-            word-break: break-word;
-            overflow-wrap: anywhere;
-        }
-        .modal-table thead th {
-            background: #f8fafc;
-        }
-        img { max-width: 100%; height: auto; }
-    </style>
+    <title>Comparativa de Precios - ${clientName}</title>
+    <style>${styles}</style>
 </head>
 <body>
-    ${reportHtml}
+    <div class="report-wrap">${reportHtml}</div>
 </body>
 </html>`;
 
     const ts = new Date();
     const safeDate = `${String(ts.getDate()).padStart(2, '0')}-${String(ts.getMonth() + 1).padStart(2, '0')}-${ts.getFullYear()}`;
-    const filename = `propuesta-${safeClientName}-${safeDate}.html`;
+    const filename = `comparativa-precios-${safeClientName}-${safeDate}.html`;
 
     const blob = new Blob([exportHtml], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -4151,47 +4151,23 @@ async function downloadComparisonTransparencyPdf() {
         return;
     }
 
+    const logoSrc = await resolveComparisonReportLogoSrc();
     const exportNode = source.cloneNode(true);
     exportNode.classList.add('pdf-report-root');
     exportNode.style.background = '#ffffff';
-    exportNode.style.padding = '10px';
-    exportNode.style.width = '740px';
+    exportNode.style.padding = '8px';
+    exportNode.style.width = '780px';
 
-    // Forzar logo absoluto para evitar fallos de resolución al exportar fuera del modal.
-    const logoImg = exportNode.querySelector('img[alt="Logo ECE Consultores"]');
-    if (logoImg) {
-        logoImg.setAttribute('src', `${window.location.origin}/logo.png`);
-        logoImg.setAttribute('crossorigin', 'anonymous');
-    }
+    const logoImgs = exportNode.querySelectorAll('img[alt="Logo ECE Consultores"]');
+    logoImgs.forEach((img) => {
+        img.setAttribute('src', logoSrc);
+        img.setAttribute('crossorigin', 'anonymous');
+        img.classList.add('report-logo');
+    });
 
     const style = document.createElement('style');
-    style.textContent = `
-        .pdf-report-root { color: #0f172a; }
-        .pdf-report-root .modal-table {
-            width: 100%;
-            table-layout: fixed;
-            border-collapse: collapse;
-        }
-        .pdf-report-root .modal-table th,
-        .pdf-report-root .modal-table td {
-            white-space: normal;
-            word-break: break-word;
-            overflow-wrap: anywhere;
-            vertical-align: top;
-        }
-        .pdf-report-root .pdf-avoid-break,
-        .pdf-report-root table,
-        .pdf-report-root tr,
-        .pdf-report-root h3,
-        .pdf-report-root h4,
-        .pdf-report-root p {
-            break-inside: avoid;
-            page-break-inside: avoid;
-        }
-        .pdf-report-root .pdf-break-before {
-            break-before: page;
-            page-break-before: always;
-        }
+    style.textContent = `${getComparisonReportExportStyles({ forPrint: false })}
+        .pdf-report-root { color: #0f172a; width: 100%; }
     `;
     exportNode.prepend(style);
 
@@ -4199,7 +4175,7 @@ async function downloadComparisonTransparencyPdf() {
     tempContainer.style.position = 'fixed';
     tempContainer.style.left = '-20000px';
     tempContainer.style.top = '0';
-    tempContainer.style.width = '740px';
+    tempContainer.style.width = '780px';
     tempContainer.style.background = '#ffffff';
     tempContainer.appendChild(exportNode);
     document.body.appendChild(tempContainer);
@@ -4220,13 +4196,13 @@ async function downloadComparisonTransparencyPdf() {
     const options = {
         margin: [8, 8, 8, 8],
         filename,
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 1.6, useCORS: true, backgroundColor: '#ffffff', scrollY: 0 },
+        image: { type: 'jpeg', quality: 0.96 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollY: 0 },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
         pagebreak: {
             mode: ['css', 'legacy'],
             before: '.pdf-break-before',
-            avoid: '.pdf-avoid-break, table, tr'
+            avoid: '.pdf-avoid-break, .card, h2, h3, h4'
         }
     };
 
