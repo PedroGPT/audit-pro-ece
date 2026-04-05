@@ -3752,7 +3752,7 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
     const baseInv = compareBaseInvoice || invoices[invoiceIdx];
     const comm = commercializers[commercializerIdx];
     if (!baseInv || !comm) {
-        alert('No se pudo abrir el informe transparente de comparativa.');
+        alert('No se pudo abrir la comparativa de precios.');
         return;
     }
 
@@ -3995,7 +3995,7 @@ function openComparisonTransparencyPrintView() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Informe Transparente</title>
+    <title>Comparativa de Precios</title>
     <style>
         @page {
             size: A4;
@@ -4258,7 +4258,7 @@ async function downloadComparisonTransparencyPdf() {
     try {
         await window.html2pdf().set(options).from(exportNode).save();
     } catch (err) {
-        console.error('[PDF] Error exportando informe transparente:', err);
+        console.error('[PDF] Error exportando comparativa de precios:', err);
         alert('No se pudo generar el PDF. Revisa consola y vuelve a intentarlo.');
     } finally {
         if (tempContainer.parentNode) tempContainer.parentNode.removeChild(tempContainer);
@@ -4798,10 +4798,10 @@ function renderSingleComparison(invoiceIdx, commercializerIdx) {
             <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Ahorro energia</div><div style="font-size:1.1rem; font-weight:700; color:${metrics.energySaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(metrics.energySaving)}</div></div>
             <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Factura simulada</div><div style="font-size:1.1rem; font-weight:700;">${formatCurrency(metrics.newTotalInvoiceSim)}</div></div>
         </div>
-        <p style="color:#64748b; margin:0 0 0.75rem;">La vista rapida prioriza energia; usa "Ver informe transparente" para revisar tambien impacto de potencia, impuestos y total final antes/despues.</p>
+        <p style="color:#64748b; margin:0 0 0.75rem;">La vista rápida prioriza energía; usa "Ver comparativa de precios" para revisar también impacto de potencia, impuestos y total final antes/después.</p>
         <div style="margin-bottom:0.75rem;">
             <button class="btn primary" onclick="applyCommercializerProposal(${invoiceIdx}, ${commercializerIdx}, '${compareScope}')">Aplicar propuesta: ${comm.name}</button>
-            <button class="btn secondary" onclick="openComparisonTransparencyModal(${invoiceIdx}, ${commercializerIdx}, '${compareScope}')" style="margin-left:0.5rem;">Ver informe transparente</button>
+            <button class="btn secondary" onclick="openComparisonTransparencyModal(${invoiceIdx}, ${commercializerIdx}, '${compareScope}')" style="margin-left:0.5rem;">Ver comparativa de precios</button>
         </div>
         <div style="overflow-x:auto;">
             <table class="modal-table">
