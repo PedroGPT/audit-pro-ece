@@ -521,6 +521,7 @@ function detectClientNameFromText(text) {
 
     // Estrategia 2: etiquetas habituales en facturas españolas
     const patterns = [
+        /titular\s*[:\-]\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i,
         /(?:nombre\s+(?:y\s+apellidos|del\s+titular|del\s+cliente|titular))\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i,
         /(?:raz[oó]n\s+social)\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i,
         /(?:titular\s+(?:del\s+contrato|del\s+suministro))\s*[:\-]?\s*([a-z0-9áéíóúüñ\s\.,\-]{3,120})/i,
