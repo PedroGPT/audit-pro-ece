@@ -1677,9 +1677,42 @@ async function cloudSync(invoice) {
             data: clean
         }], { onConflict: 'file_name' });
         if (error) throw error;
+
+        // Guardar tambien ficha maestra de suministro (CUPS) cuando exista tabla supplies.
+        await cloudUpsertSupply(clean);
+
         console.log("[Cloud] Sincronizado:", fileName);
     } catch (e) {
         console.warn("[Cloud] Error sync:", e.message);
+    }
+}
+
+async function cloudUpsertSupply(invoice) {
+    if (!supabaseClient) return;
+
+    const cups = String(invoice?.cups || '').trim();
+    if (!cups || cups === 'N/D') return;
+
+    try {
+        const payload = {
+            cups,
+            client_name: String(invoice?.clientName || '').trim() || 'Desconocido',
+            supply_address: String(invoice?.supplyAddress || '').trim(),
+            tariff_type: normalizeTariffTypeValue(invoice?.tariffType || 'N/D'),
+            current_commercializer: String(invoice?.comercializadora || '').trim(),
+            last_invoice_num: String(invoice?.invoiceNum || '').trim(),
+            last_period: String(invoice?.period || '').trim(),
+            updated_at: new Date().toISOString()
+        };
+
+        const { error } = await supabaseClient
+            .from('supplies')
+            .upsert([payload], { onConflict: 'cups' });
+
+        // Si la tabla no existe todavía, no romper el flujo de facturas.
+        if (error) throw error;
+    } catch (err) {
+        console.warn('[Cloud] No se pudo sincronizar supply por CUPS (tabla supplies pendiente o sin policy):', err?.message || err);
     }
 }
 
