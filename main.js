@@ -1767,6 +1767,48 @@ async function cloudLoadPdf(inv) {
     return null;
 }
 
+async function clearCloudHistory() {
+    if (!supabaseClient) return { ok: true, skipped: true, message: 'Sin cliente Supabase' };
+
+    try {
+        const { error: invoicesError } = await supabaseClient
+            .from('invoices')
+            .delete()
+            .not('id', 'is', null);
+        if (invoicesError) throw invoicesError;
+
+        // Intentar limpiar PDFs del storage en todos los buckets conocidos
+        for (const bucket of PDF_BUCKET_CANDIDATES) {
+            let offset = 0;
+            const limit = 100;
+            while (true) {
+                const { data: files, error: listError } = await supabaseClient
+                    .storage
+                    .from(bucket)
+                    .list('', { limit, offset, sortBy: { column: 'name', order: 'asc' } });
+                if (listError) break;
+                if (!files || files.length === 0) break;
+
+                const names = files
+                    .map(f => String(f.name || '').trim())
+                    .filter(Boolean);
+
+                if (names.length > 0) {
+                    const { error: removeError } = await supabaseClient.storage.from(bucket).remove(names);
+                    if (removeError) break;
+                }
+
+                if (files.length < limit) break;
+                offset += limit;
+            }
+        }
+
+        return { ok: true, skipped: false, message: 'Cloud limpiado' };
+    } catch (err) {
+        return { ok: false, skipped: false, message: String(err?.message || err || 'Error desconocido') };
+    }
+}
+
 function loadLocalStore() {
     const stored = localStorage.getItem('audit_pro_db');
     if (stored) {
@@ -4236,12 +4278,18 @@ async function clearAllHistory() {
         window.pendingPdfFiles = new Map();
         localStorage.removeItem('audit_pro_db');
         await clearInvoicePdfStore();
+        const cloudResult = await clearCloudHistory();
         const dashboard = document.getElementById('dashboard');
         if (dashboard) dashboard.classList.add('hidden');
         switchView('audit-view');
         renderHistory();
         renderClients();
-        console.log('[History] Historial y sesion activa vaciados completamente');
+
+        if (!cloudResult.ok) {
+            alert(`Historial local vaciado, pero NO se pudo borrar en cloud. Por eso puede reaparecer al refrescar.\nDetalle: ${cloudResult.message}`);
+        }
+
+        console.log('[History] Historial local/sesion vaciados. Resultado cloud:', cloudResult);
     }
 }
 
