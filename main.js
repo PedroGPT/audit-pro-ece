@@ -4172,10 +4172,89 @@ async function downloadComparisonTransparencyHtml() {
 }
 
 async function downloadComparisonTransparencyPdf() {
-    const win = await openComparisonReportWindow({ autoPrint: true });
-    if (!win) return;
+    const source = document.getElementById('comparison-transparency-body');
+    if (!source || !String(source.innerHTML || '').trim()) {
+        alert('No hay contenido de informe para exportar.');
+        return;
+    }
 
-    alert('Se ha abierto la vista de alta calidad. En el dialogo de impresion selecciona "Guardar como PDF". Este modo evita el efecto de captura y mejora nitidez y tamaños.');
+    if (typeof window.html2pdf !== 'function') {
+        alert('No se ha podido cargar el motor de PDF. Recarga la pagina e intenta de nuevo.');
+        return;
+    }
+
+    const clientNameMatch = String(source.innerHTML || '').match(/<strong>Cliente:<\/strong>\s*([^<\n]+)/i);
+    const clientName = (clientNameMatch ? clientNameMatch[1] : '').trim() || 'cliente';
+    const safeClientName = clientName
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9\-_\s]/g, '')
+        .trim()
+        .replace(/\s+/g, '-')
+        .toLowerCase() || 'cliente';
+
+    const logoSrc = await resolveComparisonReportLogoSrc();
+    const normalizedHtml = normalizeComparisonReportHtml(source.innerHTML, logoSrc);
+    const filenameDate = new Date();
+    const safeDate = `${filenameDate.getFullYear()}-${String(filenameDate.getMonth() + 1).padStart(2, '0')}-${String(filenameDate.getDate()).padStart(2, '0')}`;
+    const filename = `comparativa-precios-${safeClientName}-${safeDate}.pdf`;
+
+    const exportRoot = document.createElement('div');
+    exportRoot.className = 'pdf-report-root';
+    exportRoot.style.width = '794px';
+    exportRoot.style.background = '#ffffff';
+    exportRoot.style.padding = '0';
+
+    const style = document.createElement('style');
+    style.textContent = `${getComparisonReportExportStyles({ forPrint: true })}
+        body { background: #ffffff; }
+        .report-wrap { width: 190mm; max-width: 190mm; margin: 0 auto; }
+        .card { box-shadow: none !important; }
+        .pdf-report-root { color: #0f172a; width: 100%; }
+    `;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'report-wrap';
+    wrap.innerHTML = normalizedHtml;
+
+    exportRoot.appendChild(style);
+    exportRoot.appendChild(wrap);
+
+    const tempContainer = document.createElement('div');
+    tempContainer.style.position = 'fixed';
+    tempContainer.style.left = '-20000px';
+    tempContainer.style.top = '0';
+    tempContainer.style.width = '794px';
+    tempContainer.style.background = '#ffffff';
+    tempContainer.appendChild(exportRoot);
+    document.body.appendChild(tempContainer);
+
+    try {
+        await window.html2pdf().set({
+            margin: [8, 8, 8, 8],
+            filename,
+            image: { type: 'png', quality: 1 },
+            html2canvas: {
+                scale: 3,
+                useCORS: true,
+                backgroundColor: '#ffffff',
+                scrollY: 0,
+                letterRendering: true,
+                windowWidth: 1400
+            },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compressPDF: true },
+            pagebreak: {
+                mode: ['css', 'legacy'],
+                before: '.pdf-break-before',
+                avoid: '.pdf-avoid-break, .card, h2, h3, h4'
+            }
+        }).from(exportRoot).save();
+    } catch (err) {
+        console.error('[PDF] Error exportando comparativa de precios:', err);
+        alert('No se pudo generar el PDF. Revisa consola y vuelve a intentarlo.');
+    } finally {
+        if (tempContainer.parentNode) tempContainer.parentNode.removeChild(tempContainer);
+    }
 }
 
 function renderProposals() {
