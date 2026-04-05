@@ -4202,8 +4202,8 @@ async function downloadComparisonTransparencyPdf() {
     const logoSrc = await resolveComparisonReportLogoSrc();
     const normalizedHtml = normalizeComparisonReportHtml(source.innerHTML, logoSrc);
     const filenameDate = new Date();
-    const safeDate = `${filenameDate.getFullYear()}-${String(filenameDate.getMonth() + 1).padStart(2, '0')}-${String(filenameDate.getDate()).padStart(2, '0')}`;
-    const filename = `comparativa-precios-${safeClientName}-${safeDate}.pdf`;
+    const fileDateStamp = `${String(filenameDate.getDate()).padStart(2, '0')}-${String(filenameDate.getMonth() + 1).padStart(2, '0')}-${filenameDate.getFullYear()}`;
+    const filename = `comparativa-${fileDateStamp}-${safeClientName}.pdf`;
 
     const tempContainer = document.createElement('div');
     tempContainer.style.position = 'fixed';
@@ -4233,6 +4233,7 @@ async function downloadComparisonTransparencyPdf() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comparativa - ${fileDateStamp} - ${clientName}</title>
     <style>
         ${getComparisonReportExportStyles({ forPrint: true })}
         body { background: #ffffff; padding: 0; margin: 0; }
