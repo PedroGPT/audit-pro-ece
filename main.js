@@ -4125,6 +4125,10 @@ function renderProposals() {
                         ${statusOptions}
                     </select>
                 </td>
+                <td>
+                    <button class="btn secondary btn-sm" onclick="openStoredProposalReport('${rowId}')">Ver informe</button>
+                    <button class="btn secondary btn-sm" onclick="deleteProposalEntry('${rowId}')" style="margin-left:0.35rem; background-color:#ef4444; color:#fff;">Eliminar</button>
+                </td>
             </tr>
         `;
     }).join('');
@@ -4145,6 +4149,7 @@ function renderProposals() {
                             <th>Ahorro energia</th>
                             <th>Factura simulada</th>
                             <th>Estado</th>
+                            <th>Acciones</th>
                         </tr>
                     </thead>
                     <tbody>${rows}</tbody>
@@ -4179,6 +4184,117 @@ function updateProposalStatus(proposalRef, status) {
 
     saveProposalsLog();
     renderProposals();
+}
+
+function getProposalEntriesByRef(proposalRef) {
+    const ref = String(proposalRef || '');
+    if (ref.startsWith('batch:')) {
+        const batchId = ref.replace('batch:', '');
+        return proposalsLog.filter(p => String(p.batchId || '') === batchId);
+    }
+
+    const proposalId = ref.replace('proposal:', '');
+    const single = proposalsLog.find(p => p.proposalId === proposalId);
+    return single ? [single] : [];
+}
+
+function removeSupplyProposalByLogEntry(entry) {
+    const key = buildSupplyKey({
+        clientName: entry.clientName,
+        cups: entry.cups,
+        tariffType: entry.tariffType,
+        supplyAddress: entry.supplyAddress
+    });
+    if (supplyProposals[key]) {
+        delete supplyProposals[key];
+        return true;
+    }
+    return false;
+}
+
+function deleteProposalEntry(proposalRef) {
+    const entries = getProposalEntriesByRef(proposalRef);
+    if (!entries.length) return;
+
+    const isBatch = String(proposalRef || '').startsWith('batch:');
+    const msg = isBatch
+        ? `¿Eliminar este informe conjunto y sus ${entries.length} propuestas asociadas?`
+        : '¿Eliminar esta propuesta del historial?';
+    if (!confirm(msg)) return;
+
+    const idsToRemove = new Set(entries.map(e => String(e.proposalId || '')));
+    proposalsLog = proposalsLog.filter(p => !idsToRemove.has(String(p.proposalId || '')));
+
+    let removedSupplyRefs = 0;
+    entries.forEach(e => {
+        if (removeSupplyProposalByLogEntry(e)) removedSupplyRefs += 1;
+    });
+
+    saveProposalsLog();
+    saveSupplyProposals();
+    renderProposals();
+    renderClients();
+
+    console.log('[Proposals] Eliminadas propuestas:', idsToRemove.size, 'refs suministro eliminadas:', removedSupplyRefs);
+}
+
+function openStoredProposalReport(proposalRef) {
+    const entries = getProposalEntriesByRef(proposalRef);
+    if (!entries.length) {
+        alert('No se encontró el informe asociado a esta propuesta.');
+        return;
+    }
+
+    const first = entries[0];
+    const isBatch = entries.length > 1;
+    const energySaving = entries.reduce((sum, e) => sum + Number(e.energySaving || 0), 0);
+    const simulatedTotal = entries.reduce((sum, e) => sum + Number(e.simulatedTotal || 0), 0);
+    const oldTotal = entries.reduce((sum, e) => sum + Number(e.oldTotal || 0), 0);
+
+    const rows = entries.map(e => `
+        <tr>
+            <td>${e.invoiceNum || 'S/N'}</td>
+            <td>${e.cups || 'N/D'}</td>
+            <td>${getShortSupplyAddress(e.supplyAddress || 'N/D')}</td>
+            <td>${formatCurrency(e.oldTotal || 0)}</td>
+            <td>${formatCurrency(e.simulatedTotal || 0)}</td>
+            <td style="font-weight:700; color:${Number(e.totalSaving || 0) >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(e.totalSaving || 0)}</td>
+        </tr>
+    `).join('');
+
+    const modal = document.getElementById('comparison-transparency-modal');
+    const body = document.getElementById('comparison-transparency-body');
+    if (!modal || !body) {
+        alert('No se pudo abrir el visor de informe.');
+        return;
+    }
+
+    body.innerHTML = `
+        <div class="card" style="padding:0.85rem; margin-bottom:0.75rem;">
+            <h3 style="margin:0 0 0.35rem;">Informe guardado ${isBatch ? 'conjunto' : 'individual'}</h3>
+            <p style="margin:0 0 0.25rem;"><strong>Cliente:</strong> ${first.clientName || 'N/D'} | <strong>Tarifa:</strong> ${first.tariffType || 'N/D'}</p>
+            <p style="margin:0 0 0.25rem;"><strong>Comercializadora actual:</strong> ${first.currentCommercializer || 'N/D'} | <strong>Propuesta:</strong> ${first.proposedCommercializer || 'N/D'}</p>
+            <p style="margin:0;"><strong>Estado:</strong> ${first.status || 'propuesta'} | <strong>Fecha:</strong> ${new Date(first.createdAt).toLocaleString('es-ES')}</p>
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(3,minmax(180px,1fr)); gap:0.65rem; margin-bottom:0.75rem;">
+            <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Ahorro energía agregado</div><div style="font-size:1.1rem; font-weight:700; color:${energySaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(energySaving)}</div></div>
+            <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Total actual agregado</div><div style="font-size:1.1rem; font-weight:700;">${formatCurrency(oldTotal)}</div></div>
+            <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Total simulado agregado</div><div style="font-size:1.1rem; font-weight:700;">${formatCurrency(simulatedTotal)}</div></div>
+        </div>
+
+        <div class="card" style="padding:0.85rem;">
+            <div style="overflow-x:auto;">
+                <table class="modal-table">
+                    <thead><tr><th>Factura</th><th>CUPS</th><th>Suministro</th><th>Total antes</th><th>Total simulado</th><th>Ahorro total</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        </div>
+    `;
+
+    modalGuardUntil.compareTransparency = Date.now() + 250;
+    modal.classList.remove('hidden');
 }
 
 function renderCompareSelectorList() {
@@ -5054,6 +5170,8 @@ window.openComparisonTransparencyPrintView = openComparisonTransparencyPrintView
 window.downloadComparisonTransparencyHtml = downloadComparisonTransparencyHtml;
 window.downloadComparisonTransparencyPdf = downloadComparisonTransparencyPdf;
 window.updateProposalStatus = updateProposalStatus;
+window.openStoredProposalReport = openStoredProposalReport;
+window.deleteProposalEntry = deleteProposalEntry;
 window.openCommercializerModal = openCommercializerModal;
 window.closeCommercializerModal = closeCommercializerModal;
 window.saveCommercializer = saveCommercializer;
