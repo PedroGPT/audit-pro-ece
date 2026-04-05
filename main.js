@@ -4239,7 +4239,7 @@ async function downloadComparisonTransparencyPdf() {
     const normalizedHtml = normalizeComparisonReportHtml(source.innerHTML, logoSrc);
     const filenameDate = new Date();
     const fileDateStamp = `${String(filenameDate.getDate()).padStart(2, '0')}-${String(filenameDate.getMonth() + 1).padStart(2, '0')}-${filenameDate.getFullYear()}`;
-    const filename = `comparativa-${fileDateStamp}-${safeClientName}.pdf`;
+    const filename = `comparativa de precios-${safeClientName}-${fileDateStamp}.pdf`;
 
     const tempContainer = document.createElement('div');
     tempContainer.style.position = 'fixed';
