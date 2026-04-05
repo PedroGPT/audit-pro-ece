@@ -440,10 +440,10 @@ function isInvalidClientNameCandidate(value) {
 
 function detectClientNameFromText(text) {
     const raw = String(text || '');
-    const companyBeforeTaxId = raw.match(/([A-ZÁÉÍÓÚÜÑ0-9\s\.,\-]{4,120})\s+(?:NIF|CIF)\s*[:\-]?\s*[A-Z0-9]{5,}/i);
-    if (companyBeforeTaxId) {
-        const maybeName = String(companyBeforeTaxId[1] || '')
-            .replace(/^(?:cliente|titular|raz[oó]n\s+social)\s*[:\-]?\s*/i, '')
+    const taxIdMatches = [...raw.matchAll(/([A-ZÁÉÍÓÚÜÑ0-9\s\.,\-]{4,120})\s+(?:NIF|CIF)\s*[:\-]?\s*[A-Z0-9]{5,}/gi)];
+    for (const m of taxIdMatches) {
+        const maybeName = String(m?.[1] || '')
+            .replace(/^(?:cliente|titular|raz[oó]n\s+social|comercializadora|distribuidora)\s*[:\-]?\s*/i, '')
             .trim()
             .replace(/\s+/g, ' ');
         if (!isInvalidClientNameCandidate(maybeName) && !/comercializadora|distribuidora|energ[ií]a/i.test(maybeName)) {
@@ -482,6 +482,9 @@ function resolveClientName(candidateName, comercializadora, text) {
         const detectedNorm = normalizeNameToken(detected);
         const detectedIsCommercializer = detectedNorm && commNorm && detectedNorm === commNorm;
         if (detected && detected !== 'Desconocido' && !detectedIsCommercializer) return detected;
+
+        // Si no encontramos una alternativa fiable, NO conservar la comercializadora como cliente.
+        if (sameAsCommercializer) return 'Desconocido';
     }
 
     return !isInvalidClientNameCandidate(candidate) ? candidate : 'Desconocido';
@@ -1231,7 +1234,9 @@ async function runExtractionIA(text, fileName) {
         inv.cups = inv.cups || inv.CUPS || 'N/D';
         inv.period = inv.period || inv.periodo || 'N/D';
         inv.clientName = resolveClientName(inv.clientName, inv.comercializadora, text);
-        if (normalizeNameToken(inv.clientName) === normalizeNameToken(inv.comercializadora)) {
+        const clientNorm = normalizeNameToken(inv.clientName);
+        const commNorm = normalizeNameToken(inv.comercializadora);
+        if (!clientNorm || clientNorm === 'desconocido' || clientNorm === commNorm) {
             const historicalClient = resolveClientNameFromHistory(inv.cups, inv.comercializadora);
             if (historicalClient) {
                 inv.clientName = historicalClient;
