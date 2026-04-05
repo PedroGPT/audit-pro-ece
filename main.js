@@ -3674,7 +3674,7 @@ function buildReportHeaderHtml(title, subtitle = '') {
                     <div style="font-size:1rem; font-weight:700; color:#0f172a;">${cleanTitle}</div>
                     <div style="font-size:0.85rem; color:#64748b;">ECE Consultores${cleanSubtitle ? ` | ${cleanSubtitle}` : ''}</div>
                 </div>
-                <img src="${window.location.origin}/logo.png" alt="Logo ECE Consultores" style="height:54px; width:auto; object-fit:contain;" onerror="this.parentElement.style.display='none'">
+                <img src="${window.location.origin}/logo.png" alt="Logo ECE Consultores" crossorigin="anonymous" style="height:70px; width:auto; object-fit:contain; max-width:200px;" onerror="this.style.display='none'">
             </div>
         </div>
     `;
@@ -3933,6 +3933,16 @@ function openComparisonTransparencyPrintView() {
 
     const logoUrl = `${window.location.origin}/logo.png`;
     const reportHtml = String(source.innerHTML || '').replace(/src="\/logo\.png"/g, `src="${logoUrl}"`);
+
+    // Asegurar que el logo se carga correctamente en la ventana de impresión
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = reportHtml;
+    const logoImgs = tempDiv.querySelectorAll('img[alt="Logo ECE Consultores"]');
+    logoImgs.forEach(img => {
+        img.setAttribute('crossorigin', 'anonymous');
+        img.setAttribute('src', logoUrl);
+    });
+    const finalReportHtml = tempDiv.innerHTML;
 
     printWindow.document.open();
     printWindow.document.write(`
