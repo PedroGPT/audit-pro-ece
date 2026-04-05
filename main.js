@@ -3718,10 +3718,6 @@ function buildReportCoverHtml({ scopeLabel = '', currentCommercializerLabel = 'N
                     <img src="${window.location.origin}/logo.png" alt="Logo ECE Consultores" crossorigin="anonymous" style="height:70px; width:auto; object-fit:contain; max-width:200px;" onerror="this.style.display='none'">
                 </div>
                 <div style="flex:1;">
-                    <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.35rem;">
-                        <span style="display:inline-block; padding:0.25rem 0.55rem; border:1px solid #93c5fd; border-radius:999px; background:#eff6ff; color:#1d4ed8; font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;">${scopeLabel || 'Suministro individual'}</span>
-                        <span style="display:inline-block; padding:0.25rem 0.55rem; border:1px solid #cbd5e1; border-radius:999px; background:#f8fafc; color:#334155; font-size:0.72rem; font-weight:700;">Emitido: ${generatedAt}</span>
-                    </div>
                     <h1 style="margin:0; font-size:2.05rem; line-height:1.08; color:#0f172a; letter-spacing:-0.01em;">Comparativa de Precios</h1>
                     <p style="margin:0.45rem 0 0; color:#334155; font-size:1rem; max-width:760px;">Evaluacion economica de la factura actual frente a la oferta propuesta, conservando estructura de consumo real y mostrando impacto mensual estimado.</p>
                 </div>
