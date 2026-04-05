@@ -1183,7 +1183,11 @@ async function processFiles(files) {
     let rejectedByMissingTolls = 0;
     const duplicateNotices = [];
 
+    let fileIndex = 0;
     for (const file of filesToProcess) {
+        fileIndex++;
+        updateUploadProgress(fileIndex, filesToProcess.length, file.name || 'factura.pdf');
+        
         try {
             const fileNameToken = normalizePdfToken(file.name || '');
             const existingByName = [...invoices, ...dbInvoices].some(inv => normalizePdfToken(inv?.fileName || '') === fileNameToken);
@@ -3175,6 +3179,21 @@ function startCompareFromTab() {
 
 function normalizeClientKey(name) {
     return String(name || '').trim().toLowerCase();
+}
+
+function updateUploadProgress(currentIndex, totalFiles, fileName = '') {
+    const progressBar = document.getElementById('progress-bar');
+    const progressText = document.getElementById('progress-text');
+    const progressCurrent = document.getElementById('progress-current');
+    const progressFilename = document.getElementById('progress-filename');
+    
+    if (!progressBar || !progressText) return;
+    
+    const percentage = totalFiles > 0 ? Math.round((currentIndex / totalFiles) * 100) : 0;
+    progressBar.style.width = percentage + '%';
+    progressText.textContent = percentage + '%';
+    progressCurrent.textContent = `Archivo ${currentIndex} de ${totalFiles}`;
+    progressFilename.textContent = fileName || '-';
 }
 
 function getShortSupplyAddress(address, maxLen = 48) {
