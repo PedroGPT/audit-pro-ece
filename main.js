@@ -294,11 +294,20 @@ async function clearInvoicePdfStore() {
 async function getInvoicePdfFile(inv) {
     if (!inv) return null;
     const inMemory = getPendingPdfFromMemory(inv);
-    if (inMemory) return inMemory;
+    if (inMemory) {
+        // Intentar reparar disponibilidad futura en otros dispositivos/deploys.
+        cloudSyncPdf(inv, inMemory).catch(err => {
+            console.warn('[CloudPDF] No se pudo resincronizar PDF desde memoria:', err?.message || err);
+        });
+        return inMemory;
+    }
 
     const storedFile = await loadInvoicePdfFromStore(inv);
     if (storedFile) {
         cachePendingPdf(inv, storedFile);
+        cloudSyncPdf(inv, storedFile).catch(err => {
+            console.warn('[CloudPDF] No se pudo resincronizar PDF desde IndexedDB:', err?.message || err);
+        });
         return storedFile;
     }
 
