@@ -4574,17 +4574,18 @@ function deleteProposalEntry(proposalRef) {
 }
 
 function openStoredProposalReport(proposalRef) {
-    const entries = getProposalEntriesByRef(proposalRef);
-    if (!entries.length) {
-        alert('No se encontró el informe asociado a esta propuesta.');
-        return;
-    }
+    try {
+        const entries = getProposalEntriesByRef(proposalRef);
+        if (!entries.length) {
+            alert('No se encontró el informe asociado a esta propuesta.');
+            return;
+        }
 
-    const first = entries[0];
-    const isBatch = entries.length > 1;
+        const first = entries[0];
+        const isBatch = entries.length > 1;
 
-    let regeneratedCount = 0;
-    const simulations = entries.map((e) => {
+        let regeneratedCount = 0;
+        const simulations = entries.map((e) => {
         const rebuilt = rebuildProposalSnapshotIfMissing(e);
         const s = rebuilt.snapshot;
         if (rebuilt.regenerated) regeneratedCount += 1;
@@ -4601,12 +4602,12 @@ function openStoredProposalReport(proposalRef) {
         };
     }).filter(Boolean);
 
-    if (!simulations.length) {
-        alert('No se pudo reconstruir el informe de comparativa guardado.');
-        return;
-    }
+        if (!simulations.length) {
+            alert('No se pudo reconstruir el informe de comparativa guardado.');
+            return;
+        }
 
-    const totals = simulations.reduce((acc, s) => {
+        const totals = simulations.reduce((acc, s) => {
         acc.oldEnergy += Number(s.oldEnergyReference || 0);
         acc.newEnergy += Number(s.newEnergy || 0);
         acc.oldPower += Number(s.oldPowerReference || 0);
@@ -4616,10 +4617,10 @@ function openStoredProposalReport(proposalRef) {
         return acc;
     }, { oldEnergy: 0, newEnergy: 0, oldPower: 0, newPower: 0, oldTotal: 0, newTotal: 0 });
 
-    const currentCommercializers = [...new Set(simulations.map(s => String(s.currentCommercializer || 'N/D').trim()).filter(Boolean))];
-    const currentCommercializerLabel = currentCommercializers.length > 0 ? currentCommercializers.join(' | ') : 'N/D';
+        const currentCommercializers = [...new Set(simulations.map(s => String(s.currentCommercializer || 'N/D').trim()).filter(Boolean))];
+        const currentCommercializerLabel = currentCommercializers.length > 0 ? currentCommercializers.join(' | ') : 'N/D';
 
-    const involvedSuppliesRows = simulations.map(s => `
+        const involvedSuppliesRows = simulations.map(s => `
         <tr>
             <td>${s.invoiceNum}</td>
             <td>${getShortSupplyAddress(s.supplyAddress)}</td>
@@ -4632,7 +4633,7 @@ function openStoredProposalReport(proposalRef) {
         </tr>
     `).join('');
 
-    const involvedSuppliesCard = isBatch ? `
+        const involvedSuppliesCard = isBatch ? `
         <div class="card pdf-avoid-break" style="padding:0.85rem; margin-bottom:1rem; border:1px solid #e5e7eb;">
             <h3 style="margin-bottom:0.5rem;">Suministros implicados en el informe multipunto</h3>
             <div style="overflow-x:auto;">
@@ -4649,7 +4650,7 @@ function openStoredProposalReport(proposalRef) {
         </div>
     ` : '';
 
-    const blocks = simulations.map((s, idx) => {
+        const blocks = simulations.map((s, idx) => {
         const energyRowsHtml = (s.energyRows || []).map(r => `
             <tr>
                 <td>P${r.period}</td>
@@ -4732,19 +4733,19 @@ function openStoredProposalReport(proposalRef) {
         `;
     }).join('');
 
-    if (regeneratedCount > 0) {
-        saveProposalsLog();
-    }
+        if (regeneratedCount > 0) {
+            saveProposalsLog();
+        }
 
-    const modal = document.getElementById('comparison-transparency-modal');
-    const body = document.getElementById('comparison-transparency-body');
-    if (!modal || !body) {
-        alert('No se pudo abrir el visor de informe.');
-        return;
-    }
+        const modal = document.getElementById('comparison-transparency-modal');
+        const body = document.getElementById('comparison-transparency-body');
+        if (!modal || !body) {
+            alert('No se pudo abrir el visor de informe.');
+            return;
+        }
 
-    const scopeLabel = isBatch ? 'Multisuministro / Multipunto (mismo cliente y tarifa)' : 'Suministro individual';
-    body.innerHTML = `
+        const scopeLabel = isBatch ? 'Multisuministro / Multipunto (mismo cliente y tarifa)' : 'Suministro individual';
+        body.innerHTML = `
         ${buildReportCoverHtml({
             scopeLabel,
             currentCommercializerLabel,
@@ -4756,8 +4757,12 @@ function openStoredProposalReport(proposalRef) {
         ${blocks}
     `;
 
-    modalGuardUntil.compareTransparency = Date.now() + 250;
-    modal.classList.remove('hidden');
+        modalGuardUntil.compareTransparency = Date.now() + 250;
+        modal.classList.remove('hidden');
+    } catch (err) {
+        console.error('[Proposals] Error abriendo informe guardado:', err);
+        alert(`No se pudo abrir el informe guardado: ${err?.message || err}`);
+    }
 }
 
 function renderCompareSelectorList() {
