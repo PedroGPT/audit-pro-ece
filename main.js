@@ -3405,6 +3405,120 @@ function buildInvoiceTransparencySimulation(inv, comm) {
     };
 }
 
+function serializeSimulationSnapshot(simulation = {}) {
+    return {
+        energyRows: simulation.energyRows || [],
+        powerRows: simulation.powerRows || [],
+        oldCommodityEnergy: simulation.oldCommodityEnergy || 0,
+        newCommodityEnergy: simulation.newCommodityEnergy || 0,
+        tollEnergyCost: simulation.tollEnergyCost || 0,
+        oldEnergyReference: simulation.oldEnergyReference || 0,
+        newEnergy: simulation.newEnergy || 0,
+        oldPowerReference: simulation.oldPowerReference || 0,
+        newPower: simulation.newPower || 0,
+        others: simulation.others || 0,
+        alquiler: simulation.alquiler || 0,
+        reactive: simulation.reactive || 0,
+        oldIee: simulation.oldIee || 0,
+        newIee: simulation.newIee || 0,
+        taxName: simulation.taxName || 'Impuesto',
+        taxRate: simulation.taxRate || 0,
+        oldTaxAmount: simulation.oldTaxAmount || 0,
+        newTaxAmount: simulation.newTaxAmount || 0,
+        oldTotal: simulation.oldTotal || 0,
+        newTotal: simulation.newTotal || 0,
+        energySaving: simulation.energySaving || 0,
+        powerImpact: simulation.powerImpact || 0,
+        totalSaving: simulation.totalSaving || 0,
+        newSubtotalBase: simulation.newSubtotalBase || 0
+    };
+}
+
+function normalizeProposalMatchToken(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+function findInvoiceForProposalEntry(entry) {
+    const invoiceNum = normalizeProposalMatchToken(entry?.invoiceNum);
+    const cups = normalizeProposalMatchToken(entry?.cups);
+    const fileName = normalizeProposalMatchToken(entry?.fileName);
+    const clientName = normalizeProposalMatchToken(entry?.clientName);
+    const supplyAddress = normalizeProposalMatchToken(entry?.supplyAddress);
+
+    const pool = [...dbInvoices, ...invoices];
+    if (!pool.length) return null;
+
+    if (invoiceNum && cups) {
+        const strict = pool.find(inv => (
+            normalizeProposalMatchToken(inv?.invoiceNum) === invoiceNum
+            && normalizeProposalMatchToken(inv?.cups) === cups
+        ));
+        if (strict) return strict;
+    }
+
+    if (fileName) {
+        const byFile = pool.find(inv => normalizeProposalMatchToken(inv?.fileName) === fileName);
+        if (byFile) return byFile;
+    }
+
+    let best = null;
+    let bestScore = -1;
+    pool.forEach(inv => {
+        let score = 0;
+        if (invoiceNum && normalizeProposalMatchToken(inv?.invoiceNum) === invoiceNum) score += 60;
+        if (cups && normalizeProposalMatchToken(inv?.cups) === cups) score += 30;
+        if (clientName && normalizeProposalMatchToken(inv?.clientName) === clientName) score += 10;
+        if (supplyAddress && normalizeProposalMatchToken(inv?.supplyAddress) === supplyAddress) score += 10;
+        if (score > bestScore) {
+            best = inv;
+            bestScore = score;
+        }
+    });
+
+    return bestScore >= 60 ? best : null;
+}
+
+function findCommercializerForProposalEntry(entry, invoice) {
+    const proposedName = normalizeProposalMatchToken(entry?.proposedCommercializer);
+    if (!proposedName || !Array.isArray(commercializers) || commercializers.length === 0) return null;
+
+    const invoiceTariff = normalizeTariffTypeValue(invoice?.tariffType || entry?.tariffType || '');
+    const byName = commercializers.filter(c => normalizeProposalMatchToken(c?.name) === proposedName);
+    if (byName.length === 0) return null;
+
+    if (!invoiceTariff || invoiceTariff === 'N/D') return byName[0];
+    const strictTariff = byName.find(c => normalizeTariffTypeValue(c?.tariffType || '') === invoiceTariff);
+    return strictTariff || byName[0];
+}
+
+function rebuildProposalSnapshotIfMissing(entry) {
+    if (entry?.simulationSnapshot) {
+        return { snapshot: entry.simulationSnapshot, regenerated: false };
+    }
+
+    const invoice = findInvoiceForProposalEntry(entry);
+    if (!invoice) return { snapshot: null, regenerated: false };
+
+    const commercializer = findCommercializerForProposalEntry(entry, invoice);
+    if (!commercializer) return { snapshot: null, regenerated: false };
+
+    const simulation = buildInvoiceTransparencySimulation(invoice, commercializer);
+    const snapshot = serializeSimulationSnapshot(simulation);
+    entry.simulationSnapshot = snapshot;
+
+    if (!entry.simulatedTotal || Number(entry.simulatedTotal) === 0) {
+        entry.simulatedTotal = Number(simulation.newTotal || 0);
+    }
+    if (!entry.totalSaving || Number(entry.totalSaving) === 0) {
+        entry.totalSaving = Number(simulation.totalSaving || 0);
+    }
+    if (!entry.energySaving || Number(entry.energySaving) === 0) {
+        entry.energySaving = Number(simulation.energySaving || 0);
+    }
+
+    return { snapshot, regenerated: true };
+}
+
 function buildReportHeaderHtml(title, subtitle = '') {
     const cleanTitle = String(title || '').trim() || 'Informe';
     const cleanSubtitle = String(subtitle || '').trim();
@@ -3416,32 +3530,6 @@ function buildReportHeaderHtml(title, subtitle = '') {
                     <div style="font-size:0.85rem; color:#64748b;">ECE Consultores${cleanSubtitle ? ` | ${cleanSubtitle}` : ''}</div>
                 </div>
                 <img src="logo.png" alt="Logo ECE Consultores" style="height:54px; width:auto; object-fit:contain;" onerror="this.style.display='none'">
-            </div>
-        </div>
-    `;
-}
-
-function buildReportCoverHtml({
-    scopeLabel,
-    currentCommercializerLabel,
-    proposedCommercializer,
-    totals,
-    simulations
-}) {
-    const firstSimulation = (simulations || [])[0] || {};
-    const clientName = firstSimulation.clientName || 'Cliente';
-    const tariffType = firstSimulation.tariffType || 'N/D';
-    const periodLabel = formatBillingPeriod(firstSimulation.period || 'N/D');
-    const supplyCount = Number(simulations?.length || 0);
-    const currentTotal = Number(totals?.oldTotal || 0);
-    const proposedTotal = Number(totals?.newTotal || 0);
-    const savingTotal = currentTotal - proposedTotal;
-    const savingPct = currentTotal > 0 ? (savingTotal / currentTotal) * 100 : 0;
-    const generatedAt = new Date().toLocaleDateString('es-ES');
-
-    return `
-        <section class="card pdf-cover-page" style="padding:1.2rem; margin-bottom:1rem; border:1px solid #cbd5e1; background:linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);">
-            <div style="display:flex; align-items:flex-start; gap:1.5rem; margin-bottom:1rem;">
                 <img src="logo.png" alt="Logo ECE Consultores" style="height:80px; width:auto; object-fit:contain; flex-shrink:0;" onerror="this.style.display='none'">
                 <div>
                     <h1 style="margin:0; font-size:2rem; line-height:1.1; color:#0f172a;">Propuesta de Mejora de Precios</h1>
@@ -4251,8 +4339,11 @@ function openStoredProposalReport(proposalRef) {
     const simulatedTotal = entries.reduce((sum, e) => sum + Number(e.simulatedTotal || 0), 0);
     const oldTotal = entries.reduce((sum, e) => sum + Number(e.oldTotal || 0), 0);
 
+    let regeneratedCount = 0;
     const detailedBlocks = entries.map((e, idx) => {
-        const s = e.simulationSnapshot || null;
+        const rebuilt = rebuildProposalSnapshotIfMissing(e);
+        const s = rebuilt.snapshot;
+        if (rebuilt.regenerated) regeneratedCount += 1;
         if (!s) {
             return `
                 <div class="card ${idx === 0 ? 'pdf-avoid-break' : 'pdf-break-before'}" style="padding:1rem; margin-bottom:1rem; border:1px solid #dbeafe;">
@@ -4343,6 +4434,10 @@ function openStoredProposalReport(proposalRef) {
             </div>
         `;
     }).join('');
+
+    if (regeneratedCount > 0) {
+        saveProposalsLog();
+    }
 
     const rows = entries.map(e => `
         <tr>
@@ -4877,32 +4972,7 @@ function applyCommercializerProposal(invoiceIdx, commercializerIdx, scopeMode = 
             oldTotal: metrics.oldTotal,
             simulatedTotal: metrics.newTotalSim,
             totalSaving: metrics.totalSaving,
-            simulationSnapshot: {
-                energyRows: simulation.energyRows || [],
-                powerRows: simulation.powerRows || [],
-                oldCommodityEnergy: simulation.oldCommodityEnergy || 0,
-                newCommodityEnergy: simulation.newCommodityEnergy || 0,
-                tollEnergyCost: simulation.tollEnergyCost || 0,
-                oldEnergyReference: simulation.oldEnergyReference || 0,
-                newEnergy: simulation.newEnergy || 0,
-                oldPowerReference: simulation.oldPowerReference || 0,
-                newPower: simulation.newPower || 0,
-                others: simulation.others || 0,
-                alquiler: simulation.alquiler || 0,
-                reactive: simulation.reactive || 0,
-                oldIee: simulation.oldIee || 0,
-                newIee: simulation.newIee || 0,
-                taxName: simulation.taxName || 'Impuesto',
-                taxRate: simulation.taxRate || 0,
-                oldTaxAmount: simulation.oldTaxAmount || 0,
-                newTaxAmount: simulation.newTaxAmount || 0,
-                oldTotal: simulation.oldTotal || 0,
-                newTotal: simulation.newTotal || 0,
-                energySaving: simulation.energySaving || 0,
-                powerImpact: simulation.powerImpact || 0,
-                totalSaving: simulation.totalSaving || 0,
-                newSubtotalBase: simulation.newSubtotalBase || 0
-            }
+            simulationSnapshot: serializeSimulationSnapshot(simulation)
         });
     });
 
