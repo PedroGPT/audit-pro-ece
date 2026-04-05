@@ -576,6 +576,27 @@ function resolveClientNameFromHistory(cups, comercializadora) {
     return '';
 }
 
+async function compressPngToJpegThumbnail(base64Png, quality = 0.65, scale = 0.55) {
+    if (!base64Png) return null;
+    try {
+        return await new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, Math.floor(img.naturalWidth * scale));
+                canvas.height = Math.max(1, Math.floor(img.naturalHeight * scale));
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                resolve(canvas.toDataURL('image/jpeg', quality));
+            };
+            img.onerror = () => resolve(null);
+            img.src = base64Png;
+        });
+    } catch {
+        return null;
+    }
+}
+
 async function generatePdfPagePreviews(pdf, maxPages = 8) {
     try {
         const totalPages = Number(pdf?.numPages || 0);
@@ -1091,10 +1112,10 @@ function sanitizeInvoiceForStorage(inv) {
     if (!inv || typeof inv !== 'object') return inv;
     const clone = { ...inv };
     clone.fileName = String(clone.fileName || clone.invoiceNum || 'factura.pdf').trim();
-    delete clone.invoicePreviewPages;
-    delete clone.invoicePreview;
+    delete clone.invoicePreviewPages;      // array completo de páginas: sólo en memoria
     delete clone.invoicePreviewTotalPages;
     delete clone.invoicePreviewRenderedPages;
+    // invoicePreview (miniatura JPEG comprimida) se conserva en localStorage y cloud
     return clone;
 }
 
@@ -1192,9 +1213,10 @@ async function processFiles(files) {
             }
 
             auditData.invoicePreviewPages = invoicePreviewPages;
-            auditData.invoicePreview = invoicePreviewPages[0] || null;
             auditData.invoicePreviewTotalPages = Number(pdf.numPages || 0);
             auditData.invoicePreviewRenderedPages = invoicePreviewPages.length;
+            // Thumbnail JPEG comprimido para persistencia en localStorage/cloud (~30-50 KB)
+            auditData.invoicePreview = await compressPngToJpegThumbnail(invoicePreviewPages[0] || null);
             cachePendingPdf(auditData, file);
             await saveInvoicePdfToStore(auditData, file);
             invoices.push(auditData);
