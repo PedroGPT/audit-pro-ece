@@ -4178,8 +4178,8 @@ async function downloadComparisonTransparencyPdf() {
         return;
     }
 
-    if (typeof window.html2pdf !== 'function') {
-        alert('No se ha podido cargar el motor de PDF. Recarga la pagina e intenta de nuevo.');
+    if (!window.jspdf || typeof window.jspdf.jsPDF !== 'function') {
+        alert('No se ha podido cargar el motor PDF profesional. Recarga la pagina e intenta de nuevo.');
         return;
     }
 
@@ -4199,56 +4199,111 @@ async function downloadComparisonTransparencyPdf() {
     const safeDate = `${filenameDate.getFullYear()}-${String(filenameDate.getMonth() + 1).padStart(2, '0')}-${String(filenameDate.getDate()).padStart(2, '0')}`;
     const filename = `comparativa-precios-${safeClientName}-${safeDate}.pdf`;
 
-    const exportRoot = document.createElement('div');
-    exportRoot.className = 'pdf-report-root';
-    exportRoot.style.width = '794px';
-    exportRoot.style.background = '#ffffff';
-    exportRoot.style.padding = '0';
-
-    const style = document.createElement('style');
-    style.textContent = `${getComparisonReportExportStyles({ forPrint: true })}
-        body { background: #ffffff; }
-        .report-wrap { width: 190mm; max-width: 190mm; margin: 0 auto; }
-        .card { box-shadow: none !important; }
-        .pdf-report-root { color: #0f172a; width: 100%; }
-    `;
-
-    const wrap = document.createElement('div');
-    wrap.className = 'report-wrap';
-    wrap.innerHTML = normalizedHtml;
-
-    exportRoot.appendChild(style);
-    exportRoot.appendChild(wrap);
-
     const tempContainer = document.createElement('div');
     tempContainer.style.position = 'fixed';
     tempContainer.style.left = '-20000px';
     tempContainer.style.top = '0';
-    tempContainer.style.width = '794px';
+    tempContainer.style.width = '1100px';
     tempContainer.style.background = '#ffffff';
-    tempContainer.appendChild(exportRoot);
+    tempContainer.innerHTML = normalizedHtml;
     document.body.appendChild(tempContainer);
 
     try {
-        await window.html2pdf().set({
-            margin: [8, 8, 8, 8],
-            filename,
-            image: { type: 'png', quality: 1 },
-            html2canvas: {
-                scale: 3,
-                useCORS: true,
-                backgroundColor: '#ffffff',
-                scrollY: 0,
-                letterRendering: true,
-                windowWidth: 1400
-            },
-            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait', compressPDF: true },
-            pagebreak: {
-                mode: ['css', 'legacy'],
-                before: '.pdf-break-before',
-                avoid: '.pdf-avoid-break, .card, h2, h3, h4'
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const margin = 10;
+        const contentWidth = pageWidth - margin * 2;
+        let y = margin;
+
+        const ensureSpace = (needed = 8) => {
+            if (y + needed > pageHeight - margin) {
+                doc.addPage();
+                y = margin;
             }
-        }).from(exportRoot).save();
+        };
+
+        const writeLineBlock = (text, opts = {}) => {
+            const content = String(text || '').trim();
+            if (!content) return;
+            const fontSize = Number(opts.fontSize || 10);
+            const lineGap = Number(opts.lineGap || 1.15);
+            const afterGap = Number(opts.afterGap || 2.5);
+            const color = opts.color || [15, 23, 42];
+            const fontStyle = opts.bold ? 'bold' : 'normal';
+
+            doc.setFont('helvetica', fontStyle);
+            doc.setFontSize(fontSize);
+            doc.setTextColor(color[0], color[1], color[2]);
+
+            const lines = doc.splitTextToSize(content, contentWidth);
+            const blockHeight = lines.length * fontSize * 0.3528 * lineGap + afterGap;
+            ensureSpace(blockHeight);
+            doc.text(lines, margin, y);
+            y += lines.length * fontSize * 0.3528 * lineGap + afterGap;
+        };
+
+        if (String(logoSrc || '').startsWith('data:image')) {
+            try {
+                const logoType = logoSrc.includes('image/jpeg') ? 'JPEG' : 'PNG';
+                doc.addImage(logoSrc, logoType, margin, y, 35, 13);
+            } catch (logoErr) {
+                console.warn('[PDF] No se pudo insertar logo en PDF vectorial:', logoErr);
+            }
+        }
+
+        writeLineBlock('Comparativa de Precios', { fontSize: 18, bold: true, color: [15, 23, 42], afterGap: 1.5 });
+        writeLineBlock(`Cliente: ${clientName}`, { fontSize: 10, color: [51, 65, 85], afterGap: 4 });
+        y += 2;
+
+        const cards = Array.from(tempContainer.querySelectorAll('.card'));
+        const tables = Array.from(tempContainer.querySelectorAll('table'));
+
+        cards.forEach((card) => {
+            const cardTitle = card.querySelector('h1, h2, h3, h4');
+            if (cardTitle) {
+                writeLineBlock(cardTitle.textContent, { fontSize: 12, bold: true, color: [30, 41, 59], afterGap: 2 });
+            }
+
+            const cardParagraphs = Array.from(card.querySelectorAll('p')).filter((p) => !p.closest('table'));
+            cardParagraphs.forEach((p) => {
+                writeLineBlock(p.textContent, { fontSize: 9, color: [51, 65, 85], afterGap: 1.8 });
+            });
+        });
+
+        if (typeof doc.autoTable === 'function') {
+            tables.forEach((tableEl, idx) => {
+                ensureSpace(14);
+                doc.autoTable({
+                    html: tableEl,
+                    startY: y,
+                    margin: { left: margin, right: margin },
+                    tableWidth: 'auto',
+                    theme: 'grid',
+                    styles: {
+                        font: 'helvetica',
+                        fontSize: 8,
+                        cellPadding: 1.4,
+                        textColor: [15, 23, 42],
+                        lineColor: [219, 227, 239],
+                        lineWidth: 0.1,
+                        overflow: 'linebreak',
+                        valign: 'top'
+                    },
+                    headStyles: {
+                        fillColor: [248, 250, 252],
+                        textColor: [15, 23, 42],
+                        fontStyle: 'bold'
+                    },
+                    rowPageBreak: 'avoid'
+                });
+                y = (doc.lastAutoTable?.finalY || y) + 4;
+                if (idx < tables.length - 1) ensureSpace(8);
+            });
+        }
+
+        doc.save(filename);
     } catch (err) {
         console.error('[PDF] Error exportando comparativa de precios:', err);
         alert('No se pudo generar el PDF. Revisa consola y vuelve a intentarlo.');
