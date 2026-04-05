@@ -4214,14 +4214,41 @@ async function downloadComparisonTransparencyPdf() {
         return;
     }
 
-    const extractClientName = () => {
-        const html = String(source.innerHTML || '');
-        const text = String(source.textContent || '').replace(/\s+/g, ' ').trim();
-        const htmlMatch = html.match(/<strong>\s*Cliente:\s*<\/strong>\s*([^<\|\n]+)/i);
-        if (htmlMatch && String(htmlMatch[1] || '').trim()) return String(htmlMatch[1]).trim();
+    const cleanClientName = (rawValue) => {
+        let v = String(rawValue || '').replace(/\s+/g, ' ').trim();
+        if (!v) return '';
+        v = v.replace(/^cliente:\s*/i, '').trim();
+        v = v.replace(/\|.*$/, '').trim();
+        v = v.replace(/\b(Tarifa|Periodo analizado|Periodo|CUPS|Fecha de emisi[oó]n|Propuesta comercial|Coste actual|Coste propuesto|Ahorro estimado|Mejora estimada)\b.*$/i, '').trim();
+        return v;
+    };
 
+    const extractClientName = () => {
+        const strongTags = Array.from(source.querySelectorAll('strong'));
+        for (const tag of strongTags) {
+            const label = String(tag.textContent || '').trim().toLowerCase();
+            if (!label.startsWith('cliente')) continue;
+
+            const nextElText = cleanClientName(tag.nextElementSibling?.textContent || '');
+            if (nextElText) return nextElText;
+
+            const parentText = cleanClientName(tag.parentElement?.textContent || '');
+            if (parentText) return parentText;
+        }
+
+        const html = String(source.innerHTML || '');
+        const htmlMatch = html.match(/<strong>\s*Cliente:\s*<\/strong>\s*(?:<strong[^>]*>)?([^<\|\n]+)(?:<\/strong>)?/i);
+        if (htmlMatch) {
+            const candidate = cleanClientName(htmlMatch[1]);
+            if (candidate) return candidate;
+        }
+
+        const text = String(source.textContent || '').replace(/\s+/g, ' ').trim();
         const textMatch = text.match(/Cliente:\s*([^\|\n]+)/i);
-        if (textMatch && String(textMatch[1] || '').trim()) return String(textMatch[1]).trim();
+        if (textMatch) {
+            const candidate = cleanClientName(textMatch[1]);
+            if (candidate) return candidate;
+        }
 
         return 'N/D';
     };
@@ -4269,7 +4296,7 @@ async function downloadComparisonTransparencyPdf() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Comparativa - ${fileDateStamp} - ${clientName}</title>
+    <title>Comparativa de Precios - ${clientName} - ${fileDateStamp}</title>
     <style>
         ${getComparisonReportExportStyles({ forPrint: true })}
         body { background: #ffffff; padding: 0; margin: 0; }
