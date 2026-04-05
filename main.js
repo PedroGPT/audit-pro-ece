@@ -4251,6 +4251,99 @@ function openStoredProposalReport(proposalRef) {
     const simulatedTotal = entries.reduce((sum, e) => sum + Number(e.simulatedTotal || 0), 0);
     const oldTotal = entries.reduce((sum, e) => sum + Number(e.oldTotal || 0), 0);
 
+    const detailedBlocks = entries.map((e, idx) => {
+        const s = e.simulationSnapshot || null;
+        if (!s) {
+            return `
+                <div class="card ${idx === 0 ? 'pdf-avoid-break' : 'pdf-break-before'}" style="padding:1rem; margin-bottom:1rem; border:1px solid #dbeafe;">
+                    <h3 style="margin-bottom:0.5rem;">Factura ${e.invoiceNum || 'S/N'}</h3>
+                    <p style="margin:0; color:#64748b;">No hay snapshot detallado para esta propuesta. Se muestra resumen.</p>
+                </div>
+            `;
+        }
+
+        const energyRowsHtml = (s.energyRows || []).map(r => `
+            <tr>
+                <td>P${r.period}</td>
+                <td>${Number(r.kwh || 0).toFixed(2)} kWh</td>
+                <td>${Number(r.oldUnit || 0).toFixed(6)} €/kWh</td>
+                <td>${Number(r.newUnit || 0).toFixed(6)} €/kWh</td>
+                <td>${Number(r.tollUnit || 0).toFixed(6)} €/kWh</td>
+                <td>${formatCurrency(r.oldTotalAmount || 0)}</td>
+                <td>${formatCurrency(r.newTotalAmount || 0)}</td>
+                <td style="font-weight:700; color:${Number(r.delta || 0) >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(r.delta || 0)}</td>
+            </tr>
+        `).join('');
+
+        const powerRowsHtml = (s.powerRows || []).map(r => `
+            <tr>
+                <td>P${r.period}</td>
+                <td>${Number(r.kw || 0).toFixed(2)} kW</td>
+                <td>${Number(r.days || 0)}</td>
+                <td>${Number(r.oldUnit || 0).toFixed(6)} €/kW/dia</td>
+                <td>${Number(r.newUnit || 0).toFixed(6)} €/kW/dia</td>
+                <td>${formatCurrency(r.oldAmount || 0)}</td>
+                <td>${formatCurrency(r.newAmount || 0)}</td>
+                <td style="font-weight:700; color:${Number(r.delta || 0) >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(r.delta || 0)}</td>
+            </tr>
+        `).join('');
+
+        const blockClass = idx === 0 ? 'pdf-avoid-break' : 'pdf-break-before';
+        return `
+            <div class="card ${blockClass}" style="padding:1rem; margin-bottom:1rem; border:1px solid #dbeafe;">
+                <h3 style="margin-bottom:0.5rem;">Factura ${e.invoiceNum || 'S/N'}</h3>
+                <p style="margin:0 0 0.65rem; color:#334155;"><strong>Cliente:</strong> ${e.clientName || 'N/D'} | <strong>Suministro:</strong> ${getShortSupplyAddress(e.supplyAddress || 'N/D')}<br><strong>Tarifa:</strong> ${e.tariffType || 'N/D'} | <strong>CUPS:</strong> ${e.cups || 'N/D'}</p>
+
+                <h4 style="margin:0.75rem 0 0.5rem;">1) Energia por periodos</h4>
+                <div style="overflow-x:auto; margin-bottom:0.75rem;">
+                    <table class="modal-table">
+                        <thead>
+                            <tr><th>Periodo</th><th>Consumo</th><th>Energia antes</th><th>Energia despues</th><th>Peajes/cargos</th><th>Total antes</th><th>Total despues</th><th>Diferencia</th></tr>
+                        </thead>
+                        <tbody>
+                            ${energyRowsHtml || '<tr><td colspan="8">No hay periodos de energia disponibles.</td></tr>'}
+                            <tr style="font-weight:700; background:#f8fafc;"><td colspan="5" style="text-align:right;">Subtotal energia comercializada</td><td>${formatCurrency(s.oldCommodityEnergy || 0)}</td><td>${formatCurrency(s.newCommodityEnergy || 0)}</td><td style="color:${(Number(s.oldCommodityEnergy || 0) - Number(s.newCommodityEnergy || 0)) >= 0 ? '#059669' : '#dc2626'};">${formatCurrency((Number(s.oldCommodityEnergy || 0) - Number(s.newCommodityEnergy || 0)))}</td></tr>
+                            <tr style="font-weight:700; background:#f8fafc;"><td colspan="5" style="text-align:right;">Subtotal peajes/cargos energia</td><td>${formatCurrency(s.tollEnergyCost || 0)}</td><td>${formatCurrency(s.tollEnergyCost || 0)}</td><td>${formatCurrency(0)}</td></tr>
+                            <tr style="font-weight:700; background:#f8fafc;"><td colspan="5" style="text-align:right;">Total energia facturada</td><td>${formatCurrency(s.oldEnergyReference || 0)}</td><td>${formatCurrency(s.newEnergy || 0)}</td><td style="color:${Number(s.energySaving || 0) >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(s.energySaving || 0)}</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h4 style="margin:0.75rem 0 0.5rem;">2) Potencia por periodos</h4>
+                <div style="overflow-x:auto; margin-bottom:0.75rem;">
+                    <table class="modal-table">
+                        <thead>
+                            <tr><th>Periodo</th><th>Potencia</th><th>Dias</th><th>Precio antes</th><th>Precio despues</th><th>Coste antes</th><th>Coste despues</th><th>Impacto</th></tr>
+                        </thead>
+                        <tbody>
+                            ${powerRowsHtml || '<tr><td colspan="8">No hay periodos de potencia disponibles.</td></tr>'}
+                            <tr style="font-weight:700; background:#f8fafc;"><td colspan="6" style="text-align:right;">Total potencia</td><td>${formatCurrency(s.newPower || 0)}</td><td style="color:${Number(s.powerImpact || 0) >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(s.powerImpact || 0)}</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h4 style="margin:0.75rem 0 0.5rem;">3) Factura completa simulada</h4>
+                <div style="overflow-x:auto;">
+                    <table class="modal-table">
+                        <thead><tr><th>Concepto</th><th>Antes</th><th>Despues</th><th>Diferencia</th></tr></thead>
+                        <tbody>
+                            <tr><td>Energia comercializada</td><td>${formatCurrency(s.oldCommodityEnergy || 0)}</td><td>${formatCurrency(s.newCommodityEnergy || 0)}</td><td>${formatCurrency((Number(s.oldCommodityEnergy || 0) - Number(s.newCommodityEnergy || 0)))}</td></tr>
+                            <tr><td>Peajes/cargos energia</td><td>${formatCurrency(s.tollEnergyCost || 0)}</td><td>${formatCurrency(s.tollEnergyCost || 0)}</td><td>${formatCurrency(0)}</td></tr>
+                            <tr><td>Energia total facturada</td><td>${formatCurrency(s.oldEnergyReference || 0)}</td><td>${formatCurrency(s.newEnergy || 0)}</td><td>${formatCurrency(s.energySaving || 0)}</td></tr>
+                            <tr><td>Potencia</td><td>${formatCurrency(s.oldPowerReference || 0)}</td><td>${formatCurrency(s.newPower || 0)}</td><td>${formatCurrency(s.powerImpact || 0)}</td></tr>
+                            <tr><td>Otros conceptos</td><td>${formatCurrency(s.others || 0)}</td><td>${formatCurrency(s.others || 0)}</td><td>${formatCurrency(0)}</td></tr>
+                            <tr><td>Alquiler</td><td>${formatCurrency(s.alquiler || 0)}</td><td>${formatCurrency(s.alquiler || 0)}</td><td>${formatCurrency(0)}</td></tr>
+                            <tr><td>Reactiva</td><td>${formatCurrency(s.reactive || 0)}</td><td>${formatCurrency(s.reactive || 0)}</td><td>${formatCurrency(0)}</td></tr>
+                            <tr><td>Impuesto electrico (IEE)</td><td>${formatCurrency(s.oldIee || 0)}</td><td>${formatCurrency(s.newIee || 0)}</td><td>${formatCurrency((Number(s.oldIee || 0) - Number(s.newIee || 0)))}</td></tr>
+                            <tr><td>${s.taxName || 'Impuesto'} (${(Number(s.taxRate || 0) * 100).toFixed(2)}%)</td><td>${formatCurrency(s.oldTaxAmount || 0)}</td><td>${formatCurrency(s.newTaxAmount || 0)}</td><td>${formatCurrency((Number(s.oldTaxAmount || 0) - Number(s.newTaxAmount || 0)))}</td></tr>
+                            <tr style="font-weight:700; background:#eef2ff;"><td>Total factura</td><td>${formatCurrency(s.oldTotal || 0)}</td><td>${formatCurrency(s.newTotal || 0)}</td><td style="color:${Number(s.totalSaving || 0) >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(s.totalSaving || 0)}</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    }).join('');
+
     const rows = entries.map(e => `
         <tr>
             <td>${e.invoiceNum || 'S/N'}</td>
@@ -4283,7 +4376,7 @@ function openStoredProposalReport(proposalRef) {
             <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Total simulado agregado</div><div style="font-size:1.1rem; font-weight:700;">${formatCurrency(simulatedTotal)}</div></div>
         </div>
 
-        <div class="card" style="padding:0.85rem;">
+        <div class="card" style="padding:0.85rem; margin-bottom:0.75rem;">
             <div style="overflow-x:auto;">
                 <table class="modal-table">
                     <thead><tr><th>Factura</th><th>CUPS</th><th>Suministro</th><th>Total antes</th><th>Total simulado</th><th>Ahorro total</th></tr></thead>
@@ -4291,6 +4384,8 @@ function openStoredProposalReport(proposalRef) {
                 </table>
             </div>
         </div>
+
+        ${detailedBlocks}
     `;
 
     modalGuardUntil.compareTransparency = Date.now() + 250;
@@ -4747,6 +4842,7 @@ function applyCommercializerProposal(invoiceIdx, commercializerIdx, scopeMode = 
     targets.forEach(inv => {
         const key = buildSupplyKey(inv);
         const metrics = computeInvoiceProposalMetrics(inv, comm);
+        const simulation = buildInvoiceTransparencySimulation(inv, comm);
         const proposalId = `prop_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
         supplyProposals[key] = {
@@ -4780,7 +4876,33 @@ function applyCommercializerProposal(invoiceIdx, commercializerIdx, scopeMode = 
             energySaving: metrics.energySaving,
             oldTotal: metrics.oldTotal,
             simulatedTotal: metrics.newTotalSim,
-            totalSaving: metrics.totalSaving
+            totalSaving: metrics.totalSaving,
+            simulationSnapshot: {
+                energyRows: simulation.energyRows || [],
+                powerRows: simulation.powerRows || [],
+                oldCommodityEnergy: simulation.oldCommodityEnergy || 0,
+                newCommodityEnergy: simulation.newCommodityEnergy || 0,
+                tollEnergyCost: simulation.tollEnergyCost || 0,
+                oldEnergyReference: simulation.oldEnergyReference || 0,
+                newEnergy: simulation.newEnergy || 0,
+                oldPowerReference: simulation.oldPowerReference || 0,
+                newPower: simulation.newPower || 0,
+                others: simulation.others || 0,
+                alquiler: simulation.alquiler || 0,
+                reactive: simulation.reactive || 0,
+                oldIee: simulation.oldIee || 0,
+                newIee: simulation.newIee || 0,
+                taxName: simulation.taxName || 'Impuesto',
+                taxRate: simulation.taxRate || 0,
+                oldTaxAmount: simulation.oldTaxAmount || 0,
+                newTaxAmount: simulation.newTaxAmount || 0,
+                oldTotal: simulation.oldTotal || 0,
+                newTotal: simulation.newTotal || 0,
+                energySaving: simulation.energySaving || 0,
+                powerImpact: simulation.powerImpact || 0,
+                totalSaving: simulation.totalSaving || 0,
+                newSubtotalBase: simulation.newSubtotalBase || 0
+            }
         });
     });
 
