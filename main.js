@@ -3695,8 +3695,8 @@ function buildReportCoverHtml({ scopeLabel = '', currentCommercializerLabel = 'N
     return `
         <section class="card" style="padding:0.9rem; margin-bottom:1rem; border:1px solid #dbeafe; background:#f8fafc;">
             <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:1rem;">
-                <div>
-                    <img src="${window.location.origin}/logo.png" alt="Logo ECE Consultores" style="height:54px; width:auto; object-fit:contain;" onerror="this.parentElement.style.display='none'">
+                <div style="min-width:80px;">
+                    <img src="${window.location.origin}/logo.png" alt="Logo ECE Consultores" crossorigin="anonymous" style="height:70px; width:auto; object-fit:contain; max-width:200px;" onerror="this.style.display='none'">
                 </div>
                 <div style="flex:1;">
                     <h1 style="margin:0; font-size:2rem; line-height:1.1; color:#0f172a;">Comparativa de Precios</h1>
@@ -3872,7 +3872,7 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
                     </table>
                 </div>
 
-                <h4 style="margin:0.75rem 0 0.5rem;">3) Factura completa simulada (transparente)</h4>
+                <h4 style="margin:0.75rem 0 0.5rem;">3) Factura completa simulada</h4>
                 <div style="overflow-x:auto;">
                     <table class="modal-table">
                         <thead>
@@ -3892,42 +3892,6 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
                         </tbody>
                     </table>
                 </div>
-
-                <h4 style="margin:0.75rem 0 0.5rem;">4) Como se ha calculado esta nueva factura</h4>
-                <div style="overflow-x:auto;">
-                    <table class="modal-table">
-                        <thead>
-                            <tr><th>Bloque</th><th>Criterio aplicado</th><th>Calculo</th></tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td>Base original</td>
-                                <td>Se toma la factura ya analizada del cliente como referencia.</td>
-                                <td>Energia original = ${formatCurrency(s.oldEnergyReference)} | Potencia original = ${formatCurrency(s.oldPowerReference)} | Otros fijos = ${formatCurrency(s.others + s.alquiler + s.reactive)}</td>
-                            </tr>
-                            <tr>
-                                <td>Energia nueva</td>
-                                <td>Se sustituyen solo los precios de energia por periodo; los peajes/cargos extraidos se mantienen.</td>
-                                <td>Energia nueva = Energia comercializada nueva ${formatCurrency(s.newCommodityEnergy)} + parte fija energia ${formatCurrency(s.tollEnergyCost)} = ${formatCurrency(s.newEnergy)}</td>
-                            </tr>
-                            <tr>
-                                <td>Potencia nueva</td>
-                                <td>Se recalculan los periodos de potencia con los nuevos precios configurados; lo no variable queda preservado.</td>
-                                <td>Potencia nueva = ${formatCurrency(s.newPower)}</td>
-                            </tr>
-                            <tr>
-                                <td>Base imponible nueva</td>
-                                <td>Se mantiene el resto de conceptos exactamente igual.</td>
-                                <td>Nueva base = Energia ${formatCurrency(s.newEnergy)} + Potencia ${formatCurrency(s.newPower)} + Otros ${formatCurrency(s.others)} + Alquiler ${formatCurrency(s.alquiler)} + Reactiva ${formatCurrency(s.reactive)} = ${formatCurrency(s.newSubtotalBase)}</td>
-                            </tr>
-                            <tr>
-                                <td>Impuestos</td>
-                                <td>Se recalculan sobre la nueva base imponible.</td>
-                                <td>IEE nuevo = ${formatCurrency(s.newIee)} | ${s.taxName} nuevo = ${formatCurrency(s.newTaxAmount)} | Total nuevo = ${formatCurrency(s.newTotal)}</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
             </div>
         `;
     }).join('');
@@ -3941,24 +3905,6 @@ function openComparisonTransparencyModal(invoiceIdx, commercializerIdx, scopeMod
             totals,
             simulations
         })}
-        <div class="card pdf-avoid-break" style="padding:0.85rem; margin-bottom:1rem; border:1px solid #e5e7eb;">
-            <h3 style="margin-bottom:0.5rem;">Reglas de transparencia del calculo</h3>
-            <div style="overflow-x:auto;">
-                <table class="modal-table">
-                    <thead>
-                        <tr><th>Elemento</th><th>Tratamiento en la simulacion</th></tr>
-                    </thead>
-                    <tbody>
-                        <tr><td>Factura base</td><td>Se usa la factura original ya analizada en el detalle del cliente.</td></tr>
-                        <tr><td>Energia</td><td>Se recalcula con los nuevos precios por periodo aplicados al mismo consumo extraido.</td></tr>
-                        <tr><td>Potencia</td><td>Se recalcula con los nuevos precios por periodo sobre la misma potencia y mismos dias.</td></tr>
-                        <tr><td>Peajes/cargos de energia</td><td>Se conservan como parte fija de la energia ya extraida de la factura.</td></tr>
-                        <tr><td>Otros conceptos, alquiler y reactiva</td><td>Se mantienen exactamente iguales a la factura original.</td></tr>
-                        <tr><td>IEE e IVA/IGIC</td><td>Se recalculan automaticamente sobre la nueva base imponible.</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
         ${involvedSuppliesCard}
         ${blocks}
     `;
@@ -3986,7 +3932,7 @@ function openComparisonTransparencyPrintView() {
     }
 
     const logoUrl = `${window.location.origin}/logo.png`;
-    const reportHtml = String(source.innerHTML || '').replace(/src="logo\.png"/g, `src="${logoUrl}"`);
+    const reportHtml = String(source.innerHTML || '').replace(/src="\/logo\.png"/g, `src="${logoUrl}"`);
 
     printWindow.document.open();
     printWindow.document.write(`
@@ -4626,7 +4572,7 @@ function openStoredProposalReport(proposalRef) {
 
     body.innerHTML = `
         <div class="card" style="padding:0.85rem; margin-bottom:0.75rem;">
-            <h3 style="margin:0 0 0.35rem;">Informe guardado ${isBatch ? 'conjunto' : 'individual'}</h3>
+            <h3 style="margin:0 0 0.35rem;">Comparativa de Precios</h3>
             <p style="margin:0 0 0.25rem;"><strong>Cliente:</strong> ${first.clientName || 'N/D'} | <strong>Tarifa:</strong> ${first.tariffType || 'N/D'}</p>
             <p style="margin:0 0 0.25rem;"><strong>Comercializadora actual:</strong> ${first.currentCommercializer || 'N/D'} | <strong>Propuesta:</strong> ${first.proposedCommercializer || 'N/D'}</p>
             <p style="margin:0;"><strong>Estado:</strong> ${first.status || 'propuesta'} | <strong>Fecha:</strong> ${new Date(first.createdAt).toLocaleString('es-ES')}</p>
