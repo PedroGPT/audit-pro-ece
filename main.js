@@ -3949,14 +3949,14 @@ function getComparisonReportExportStyles({ forPrint = false } = {}) {
             margin: 0;
             padding: ${forPrint ? '0' : '16px'};
             color: #0f172a;
-            background: #f5f8fc;
+            background: ${forPrint ? '#ffffff' : '#f5f8fc'};
             font-family: "Segoe UI", Tahoma, Arial, sans-serif;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
         }
         .report-wrap {
-            width: 100%;
-            max-width: 1080px;
+            width: ${forPrint ? '190mm' : '100%'};
+            max-width: ${forPrint ? '190mm' : '1080px'};
             margin: 0 auto;
         }
         .card {
@@ -4055,22 +4055,47 @@ function normalizeComparisonReportHtml(sourceHtml, logoSrc) {
     return tempDiv.innerHTML;
 }
 
-async function openComparisonTransparencyPrintView() {
+async function openComparisonReportWindow({ autoPrint = false } = {}) {
     const source = document.getElementById('comparison-transparency-body');
     if (!source || !String(source.innerHTML || '').trim()) {
-        alert('No hay contenido de informe para imprimir.');
-        return;
+        alert('No hay contenido de informe para exportar.');
+        return null;
     }
 
     const printWindow = window.open('', '_blank', 'noopener,noreferrer');
     if (!printWindow) {
         alert('El navegador bloqueo la ventana emergente. Permite popups para abrir la vista de impresion.');
-        return;
+        return null;
     }
 
     const logoSrc = await resolveComparisonReportLogoSrc();
     const finalReportHtml = normalizeComparisonReportHtml(source.innerHTML, logoSrc);
     const styles = getComparisonReportExportStyles({ forPrint: true });
+    const printScript = autoPrint ? `
+    <script>
+        (function () {
+            const waitForImages = () => {
+                const imgs = Array.from(document.images || []);
+                if (imgs.length === 0) return Promise.resolve();
+                return Promise.all(imgs.map((img) => {
+                    if (img.complete) return Promise.resolve();
+                    return new Promise((resolve) => {
+                        img.onload = resolve;
+                        img.onerror = resolve;
+                    });
+                }));
+            };
+
+            window.addEventListener('load', () => {
+                waitForImages().then(() => {
+                    setTimeout(() => {
+                        window.focus();
+                        window.print();
+                    }, 200);
+                });
+            });
+        })();
+    </script>` : '';
 
     printWindow.document.open();
     printWindow.document.write(`
@@ -4084,10 +4109,17 @@ async function openComparisonTransparencyPrintView() {
 </head>
 <body>
     <div class="report-wrap">${finalReportHtml}</div>
+    ${printScript}
 </body>
 </html>
     `);
     printWindow.document.close();
+
+    return printWindow;
+}
+
+async function openComparisonTransparencyPrintView() {
+    await openComparisonReportWindow({ autoPrint: false });
 }
 
 async function downloadComparisonTransparencyHtml() {
@@ -4140,80 +4172,10 @@ async function downloadComparisonTransparencyHtml() {
 }
 
 async function downloadComparisonTransparencyPdf() {
-    const source = document.getElementById('comparison-transparency-body');
-    if (!source || !String(source.innerHTML || '').trim()) {
-        alert('No hay contenido de informe para exportar.');
-        return;
-    }
+    const win = await openComparisonReportWindow({ autoPrint: true });
+    if (!win) return;
 
-    if (typeof window.html2pdf !== 'function') {
-        alert('No se ha podido cargar el motor de PDF (html2pdf). Recarga la pagina e intenta de nuevo.');
-        return;
-    }
-
-    const logoSrc = await resolveComparisonReportLogoSrc();
-    const exportNode = source.cloneNode(true);
-    exportNode.classList.add('pdf-report-root');
-    exportNode.style.background = '#ffffff';
-    exportNode.style.padding = '8px';
-    exportNode.style.width = '780px';
-
-    const logoImgs = exportNode.querySelectorAll('img[alt="Logo ECE Consultores"]');
-    logoImgs.forEach((img) => {
-        img.setAttribute('src', logoSrc);
-        img.setAttribute('crossorigin', 'anonymous');
-        img.classList.add('report-logo');
-    });
-
-    const style = document.createElement('style');
-    style.textContent = `${getComparisonReportExportStyles({ forPrint: false })}
-        .pdf-report-root { color: #0f172a; width: 100%; }
-    `;
-    exportNode.prepend(style);
-
-    const tempContainer = document.createElement('div');
-    tempContainer.style.position = 'fixed';
-    tempContainer.style.left = '-20000px';
-    tempContainer.style.top = '0';
-    tempContainer.style.width = '780px';
-    tempContainer.style.background = '#ffffff';
-    tempContainer.appendChild(exportNode);
-    document.body.appendChild(tempContainer);
-
-    const images = Array.from(exportNode.querySelectorAll('img'));
-    await Promise.all(images.map((img) => {
-        if (img.complete) return Promise.resolve();
-        return new Promise((resolve) => {
-            img.onload = () => resolve();
-            img.onerror = () => resolve();
-        });
-    }));
-
-    const ts = new Date();
-    const safeDate = `${ts.getFullYear()}-${String(ts.getMonth() + 1).padStart(2, '0')}-${String(ts.getDate()).padStart(2, '0')}`;
-    const filename = `informe-transparente-${safeDate}.pdf`;
-
-    const options = {
-        margin: [8, 8, 8, 8],
-        filename,
-        image: { type: 'jpeg', quality: 0.96 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollY: 0 },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        pagebreak: {
-            mode: ['css', 'legacy'],
-            before: '.pdf-break-before',
-            avoid: '.pdf-avoid-break, .card, h2, h3, h4'
-        }
-    };
-
-    try {
-        await window.html2pdf().set(options).from(exportNode).save();
-    } catch (err) {
-        console.error('[PDF] Error exportando comparativa de precios:', err);
-        alert('No se pudo generar el PDF. Revisa consola y vuelve a intentarlo.');
-    } finally {
-        if (tempContainer.parentNode) tempContainer.parentNode.removeChild(tempContainer);
-    }
+    alert('Se ha abierto la vista de alta calidad. En el dialogo de impresion selecciona "Guardar como PDF". Este modo evita el efecto de captura y mejora nitidez y tamaños.');
 }
 
 function renderProposals() {
