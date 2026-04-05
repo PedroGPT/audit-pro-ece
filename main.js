@@ -3640,15 +3640,37 @@ function buildReportHeaderHtml(title, subtitle = '') {
     const cleanTitle = String(title || '').trim() || 'Informe';
     const cleanSubtitle = String(subtitle || '').trim();
     return `
-        <div class="card" style="padding:0.9rem; margin-bottom:1rem; border:1px solid #dbeafe; background:#f8fafc;">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+        <div class="card" style="padding:0.75rem; margin-bottom:0.75rem; border:1px solid #dbeafe; background:#f8fafc;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; flex-wrap:wrap;">
                 <div>
                     <div style="font-size:1rem; font-weight:700; color:#0f172a;">${cleanTitle}</div>
                     <div style="font-size:0.85rem; color:#64748b;">ECE Consultores${cleanSubtitle ? ` | ${cleanSubtitle}` : ''}</div>
                 </div>
                 <img src="logo.png" alt="Logo ECE Consultores" style="height:54px; width:auto; object-fit:contain;" onerror="this.style.display='none'">
-                <img src="logo.png" alt="Logo ECE Consultores" style="height:80px; width:auto; object-fit:contain; flex-shrink:0;" onerror="this.style.display='none'">
+            </div>
+        </div>
+    `;
+}
+
+function buildReportCoverHtml({ scopeLabel = '', currentCommercializerLabel = 'N/D', proposedCommercializer = 'N/D', totals = {}, simulations = [] } = {}) {
+    const firstSim = simulations[0] || {};
+    const clientName = String(firstSim.clientName || 'N/D');
+    const tariffType = String(firstSim.tariffType || 'N/D');
+    const periodLabel = firstSim.period ? formatBillingPeriod(firstSim.period) : 'N/D';
+    const supplyCount = simulations.length;
+    const generatedAt = new Date().toLocaleDateString('es-ES');
+    const currentTotal = Number(totals.oldTotal || 0);
+    const proposedTotal = Number(totals.newTotal || 0);
+    const savingTotal = currentTotal - proposedTotal;
+    const savingPct = currentTotal > 0 ? (savingTotal / currentTotal) * 100 : 0;
+
+    return `
+        <section class="card" style="padding:0.9rem; margin-bottom:1rem; border:1px solid #dbeafe; background:#f8fafc;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:1rem;">
                 <div>
+                    <img src="logo.png" alt="Logo ECE Consultores" style="height:54px; width:auto; object-fit:contain;" onerror="this.style.display='none'">
+                </div>
+                <div style="flex:1;">
                     <h1 style="margin:0; font-size:2rem; line-height:1.1; color:#0f172a;">Propuesta de Mejora de Precios</h1>
                     <p style="margin:0.45rem 0 0; color:#475569; font-size:1rem; max-width:760px;">Se presenta una propuesta comparativa sobre la factura analizada, manteniendo la estructura real del suministro y recalculando el impacto económico estimado con una nueva oferta de precios.</p>
                 </div>
