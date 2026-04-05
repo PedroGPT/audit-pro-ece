@@ -3996,25 +3996,68 @@ function renderProposals() {
             return matchText && matchStatus && matchTariff && matchCom;
         });
 
-    if (filtered.length === 0) {
+    // Agrupar informes conjuntos (multisuministro) por batchId para no mostrar filas sueltas.
+    const displayRows = [];
+    const groupedByBatch = new Map();
+    filtered.forEach(p => {
+        const isJoint = p.scope === 'client-tariff' && p.batchId;
+        if (!isJoint) {
+            displayRows.push({ ...p, _displayType: 'single' });
+            return;
+        }
+
+        const key = String(p.batchId);
+        if (!groupedByBatch.has(key)) {
+            groupedByBatch.set(key, {
+                ...p,
+                _displayType: 'batch',
+                _displayId: `batch:${key}`,
+                _supplyCount: Number(p.batchSupplyCount || 0) || 1,
+                _energySavingAgg: Number(p.energySaving || 0),
+                _simulatedTotalAgg: Number(p.simulatedTotal || 0),
+                _cupsSet: new Set([String(p.cups || '').trim()])
+            });
+            displayRows.push(groupedByBatch.get(key));
+        } else {
+            const g = groupedByBatch.get(key);
+            g._energySavingAgg += Number(p.energySaving || 0);
+            g._simulatedTotalAgg += Number(p.simulatedTotal || 0);
+            g._cupsSet.add(String(p.cups || '').trim());
+            g._supplyCount = Math.max(g._supplyCount, g._cupsSet.size, Number(p.batchSupplyCount || 0) || 1);
+        }
+    });
+
+    if (displayRows.length === 0) {
         list.innerHTML = '<div class="card" style="padding:1rem;">No hay propuestas registradas con esos filtros.</div>';
         return;
     }
 
-    const rows = filtered.map(p => {
+    const rows = displayRows.map(p => {
+        const rowId = p._displayType === 'batch'
+            ? `batch:${p.batchId}`
+            : `proposal:${p.proposalId}`;
         const statusOptions = getProposalStatusOptions().map(v => `<option value="${v}" ${p.status === v ? 'selected' : ''}>${v}</option>`).join('');
+        const informeLabel = p._displayType === 'batch'
+            ? `Conjunto (${p._supplyCount} suministro${p._supplyCount > 1 ? 's' : ''})`
+            : 'Individual';
+        const cupsLabel = p._displayType === 'batch'
+            ? `${p._supplyCount} CUPS`
+            : (p.cups || 'N/D');
+        const energySavingValue = p._displayType === 'batch' ? p._energySavingAgg : Number(p.energySaving || 0);
+        const simulatedTotalValue = p._displayType === 'batch' ? p._simulatedTotalAgg : Number(p.simulatedTotal || 0);
         return `
             <tr>
                 <td>${new Date(p.createdAt).toLocaleDateString('es-ES')}</td>
                 <td>${p.clientName || 'N/D'}</td>
-                <td>${p.cups || 'N/D'}</td>
+                <td>${cupsLabel}</td>
                 <td>${p.tariffType || 'N/D'}</td>
+                <td>${informeLabel}</td>
                 <td>${p.currentCommercializer || 'N/D'}</td>
                 <td>${p.proposedCommercializer || 'N/D'}</td>
-                <td>${formatCurrency(p.energySaving || 0)}</td>
-                <td>${formatCurrency(p.simulatedTotal || 0)}</td>
+                <td>${formatCurrency(energySavingValue)}</td>
+                <td>${formatCurrency(simulatedTotalValue)}</td>
                 <td>
-                    <select onchange="updateProposalStatus('${p.proposalId}', this.value)" style="padding:0.35rem; border:1px solid #d1d5db; border-radius:6px;">
+                    <select onchange="updateProposalStatus('${rowId}', this.value)" style="padding:0.35rem; border:1px solid #d1d5db; border-radius:6px;">
                         ${statusOptions}
                     </select>
                 </td>
@@ -4032,6 +4075,7 @@ function renderProposals() {
                             <th>Cliente</th>
                             <th>CUPS</th>
                             <th>Tarifa</th>
+                            <th>Informe</th>
                             <th>Actual</th>
                             <th>Propuesta</th>
                             <th>Ahorro energia</th>
@@ -4046,11 +4090,29 @@ function renderProposals() {
     `;
 }
 
-function updateProposalStatus(proposalId, status) {
-    const idx = proposalsLog.findIndex(p => p.proposalId === proposalId);
-    if (idx < 0) return;
-    proposalsLog[idx].status = status;
-    proposalsLog[idx].updatedAt = new Date().toISOString();
+function updateProposalStatus(proposalRef, status) {
+    const ref = String(proposalRef || '');
+    const now = new Date().toISOString();
+
+    if (ref.startsWith('batch:')) {
+        const batchId = ref.replace('batch:', '');
+        let changed = 0;
+        proposalsLog.forEach(p => {
+            if (String(p.batchId || '') === batchId) {
+                p.status = status;
+                p.updatedAt = now;
+                changed += 1;
+            }
+        });
+        if (changed === 0) return;
+    } else {
+        const proposalId = ref.replace('proposal:', '');
+        const idx = proposalsLog.findIndex(p => p.proposalId === proposalId);
+        if (idx < 0) return;
+        proposalsLog[idx].status = status;
+        proposalsLog[idx].updatedAt = now;
+    }
+
     saveProposalsLog();
     renderProposals();
 }
@@ -4499,6 +4561,9 @@ function applyCommercializerProposal(invoiceIdx, commercializerIdx, scopeMode = 
         return;
     }
 
+    const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const batchCreatedAt = new Date().toISOString();
+
     targets.forEach(inv => {
         const key = buildSupplyKey(inv);
         const metrics = computeInvoiceProposalMetrics(inv, comm);
@@ -4514,8 +4579,10 @@ function applyCommercializerProposal(invoiceIdx, commercializerIdx, scopeMode = 
 
         proposalsLog.push({
             proposalId,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
+            batchId,
+            batchSupplyCount: targets.length,
+            createdAt: batchCreatedAt,
+            updatedAt: batchCreatedAt,
             status: 'propuesta',
             scope: scopeMode,
             invoiceNum: inv.invoiceNum || 'S/N',
