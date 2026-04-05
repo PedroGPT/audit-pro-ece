@@ -4582,24 +4582,74 @@ function openStoredProposalReport(proposalRef) {
 
     const first = entries[0];
     const isBatch = entries.length > 1;
-    const energySaving = entries.reduce((sum, e) => sum + Number(e.energySaving || 0), 0);
-    const simulatedTotal = entries.reduce((sum, e) => sum + Number(e.simulatedTotal || 0), 0);
-    const oldTotal = entries.reduce((sum, e) => sum + Number(e.oldTotal || 0), 0);
 
     let regeneratedCount = 0;
-    const detailedBlocks = entries.map((e, idx) => {
+    const simulations = entries.map((e) => {
         const rebuilt = rebuildProposalSnapshotIfMissing(e);
         const s = rebuilt.snapshot;
         if (rebuilt.regenerated) regeneratedCount += 1;
-        if (!s) {
-            return `
-                <div class="card ${idx === 0 ? 'pdf-avoid-break' : 'pdf-break-before'}" style="padding:1rem; margin-bottom:1rem; border:1px solid #dbeafe;">
-                    <h3 style="margin-bottom:0.5rem;">Factura ${normalizeInvoiceLabel(e.invoiceNum || 'S/N')}</h3>
-                    <p style="margin:0; color:#64748b;">No hay snapshot detallado para esta propuesta. Se muestra resumen.</p>
-                </div>
-            `;
-        }
+        if (!s) return null;
+        return {
+            ...s,
+            invoiceNum: normalizeInvoiceLabel(s.invoiceNum || e.invoiceNum || 'S/N'),
+            clientName: s.clientName || e.clientName || 'N/D',
+            currentCommercializer: s.currentCommercializer || e.currentCommercializer || 'N/D',
+            cups: s.cups || e.cups || 'N/D',
+            supplyAddress: s.supplyAddress || e.supplyAddress || 'N/D',
+            period: s.period || e.period || 'N/D',
+            tariffType: s.tariffType || e.tariffType || 'N/D'
+        };
+    }).filter(Boolean);
 
+    if (!simulations.length) {
+        alert('No se pudo reconstruir el informe de comparativa guardado.');
+        return;
+    }
+
+    const totals = simulations.reduce((acc, s) => {
+        acc.oldEnergy += Number(s.oldEnergyReference || 0);
+        acc.newEnergy += Number(s.newEnergy || 0);
+        acc.oldPower += Number(s.oldPowerReference || 0);
+        acc.newPower += Number(s.newPower || 0);
+        acc.oldTotal += Number(s.oldTotal || 0);
+        acc.newTotal += Number(s.newTotal || 0);
+        return acc;
+    }, { oldEnergy: 0, newEnergy: 0, oldPower: 0, newPower: 0, oldTotal: 0, newTotal: 0 });
+
+    const currentCommercializers = [...new Set(simulations.map(s => String(s.currentCommercializer || 'N/D').trim()).filter(Boolean))];
+    const currentCommercializerLabel = currentCommercializers.length > 0 ? currentCommercializers.join(' | ') : 'N/D';
+
+    const involvedSuppliesRows = simulations.map(s => `
+        <tr>
+            <td>${s.invoiceNum}</td>
+            <td>${getShortSupplyAddress(s.supplyAddress)}</td>
+            <td>${s.cups}</td>
+            <td>${formatBillingPeriod(s.period)}</td>
+            <td>${s.tariffType}</td>
+            <td>${s.currentCommercializer || 'N/D'}</td>
+            <td>${first.proposedCommercializer || 'N/D'}</td>
+            <td>${formatCurrency(s.oldTotal)}</td>
+        </tr>
+    `).join('');
+
+    const involvedSuppliesCard = isBatch ? `
+        <div class="card pdf-avoid-break" style="padding:0.85rem; margin-bottom:1rem; border:1px solid #e5e7eb;">
+            <h3 style="margin-bottom:0.5rem;">Suministros implicados en el informe multipunto</h3>
+            <div style="overflow-x:auto;">
+                <table class="modal-table">
+                    <thead>
+                        <tr><th>Factura</th><th>Suministro</th><th>CUPS</th><th>Periodo</th><th>Tarifa</th><th>Comercializadora actual</th><th>Comercializadora propuesta</th><th>Total actual</th></tr>
+                    </thead>
+                    <tbody>
+                        ${involvedSuppliesRows || '<tr><td colspan="8">No hay suministros implicados.</td></tr>'}
+                        <tr style="font-weight:700; background:#f8fafc;"><td colspan="7" style="text-align:right;">Total actual agregado</td><td>${formatCurrency(totals.oldTotal)}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    ` : '';
+
+    const blocks = simulations.map((s, idx) => {
         const energyRowsHtml = (s.energyRows || []).map(r => `
             <tr>
                 <td>P${r.period}</td>
@@ -4629,8 +4679,8 @@ function openStoredProposalReport(proposalRef) {
         const blockClass = idx === 0 ? 'pdf-avoid-break' : 'pdf-break-before';
         return `
             <div class="card ${blockClass}" style="padding:1rem; margin-bottom:1rem; border:1px solid #dbeafe;">
-                <h3 style="margin-bottom:0.5rem;">Factura ${normalizeInvoiceLabel(e.invoiceNum || 'S/N')}</h3>
-                <p style="margin:0 0 0.65rem; color:#334155;"><strong>Cliente:</strong> ${e.clientName || 'N/D'} | <strong>Suministro:</strong> ${getShortSupplyAddress(e.supplyAddress || 'N/D')}<br><strong>Tarifa:</strong> ${e.tariffType || 'N/D'} | <strong>CUPS:</strong> ${e.cups || 'N/D'}</p>
+                <h3 style="margin-bottom:0.5rem;">Factura ${s.invoiceNum}</h3>
+                <p style="margin:0 0 0.65rem; color:#334155;"><strong>Cliente:</strong> ${s.clientName} | <strong>Suministro:</strong> ${getShortSupplyAddress(s.supplyAddress)}<br><strong>Periodo:</strong> ${formatBillingPeriod(s.period)} | <strong>Tarifa:</strong> ${s.tariffType} | <strong>CUPS:</strong> ${s.cups}</p>
 
                 <h4 style="margin:0.75rem 0 0.5rem;">1) Energia por periodos</h4>
                 <div style="overflow-x:auto; margin-bottom:0.75rem;">
@@ -4686,17 +4736,6 @@ function openStoredProposalReport(proposalRef) {
         saveProposalsLog();
     }
 
-    const rows = entries.map(e => `
-        <tr>
-            <td>${normalizeInvoiceLabel(e.invoiceNum || 'S/N')}</td>
-            <td>${e.cups || 'N/D'}</td>
-            <td>${getShortSupplyAddress(e.supplyAddress || 'N/D')}</td>
-            <td>${formatCurrency(e.oldTotal || 0)}</td>
-            <td>${formatCurrency(e.simulatedTotal || 0)}</td>
-            <td style="font-weight:700; color:${Number(e.totalSaving || 0) >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(e.totalSaving || 0)}</td>
-        </tr>
-    `).join('');
-
     const modal = document.getElementById('comparison-transparency-modal');
     const body = document.getElementById('comparison-transparency-body');
     if (!modal || !body) {
@@ -4704,29 +4743,16 @@ function openStoredProposalReport(proposalRef) {
         return;
     }
 
+    const scopeLabel = isBatch ? 'Multisuministro / Multipunto (mismo cliente y tarifa)' : 'Suministro individual';
     body.innerHTML = `
-        <div class="card" style="padding:0.85rem; margin-bottom:0.75rem;">
-            <h3 style="margin:0 0 0.35rem;">Comparativa de Precios</h3>
-            <p style="margin:0 0 0.25rem;"><strong>Cliente:</strong> ${first.clientName || 'N/D'} | <strong>Tarifa:</strong> ${first.tariffType || 'N/D'}</p>
-            <p style="margin:0 0 0.25rem;"><strong>Comercializadora actual:</strong> ${first.currentCommercializer || 'N/D'} | <strong>Propuesta:</strong> ${first.proposedCommercializer || 'N/D'}</p>
-            <p style="margin:0;"><strong>Estado:</strong> ${first.status || 'propuesta'} | <strong>Fecha:</strong> ${new Date(first.createdAt).toLocaleString('es-ES')}</p>
-        </div>
-
-        <div style="display:grid; grid-template-columns:repeat(3,minmax(180px,1fr)); gap:0.65rem; margin-bottom:0.75rem;">
-            <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Ahorro energía agregado</div><div style="font-size:1.1rem; font-weight:700; color:${energySaving >= 0 ? '#059669' : '#dc2626'};">${formatCurrency(energySaving)}</div></div>
-            <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Total actual agregado</div><div style="font-size:1.1rem; font-weight:700;">${formatCurrency(oldTotal)}</div></div>
-            <div class="card" style="padding:0.75rem;"><div style="font-size:0.8rem; color:#64748b;">Total simulado agregado</div><div style="font-size:1.1rem; font-weight:700;">${formatCurrency(simulatedTotal)}</div></div>
-        </div>
-
-        <div class="card" style="padding:0.85rem; margin-bottom:0.75rem;">
-            <div style="overflow-x:auto;">
-                <table class="modal-table">
-                    <thead><tr><th>Factura</th><th>CUPS</th><th>Suministro</th><th>Total antes</th><th>Total simulado</th><th>Ahorro total</th></tr></thead>
-                    <tbody>${rows}</tbody>
-                </table>
-            </div>
-        </div>
-
+        ${buildReportCoverHtml({
+            scopeLabel,
+            currentCommercializerLabel,
+            proposedCommercializer: first.proposedCommercializer || 'N/D',
+            totals,
+            simulations
+        })}
+        ${involvedSuppliesCard}
         ${detailedBlocks}
     `;
 
