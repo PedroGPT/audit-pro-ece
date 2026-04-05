@@ -55,6 +55,18 @@ function normalizePdfToken(value) {
     return String(value || '').trim().toLowerCase();
 }
 
+function normalizeInvoiceLabel(value) {
+    let raw = String(value || '').trim();
+    if (!raw) return 'S/N';
+
+    raw = raw.replace(/\s+/g, ' ');
+    raw = raw.replace(/^(?:fecha\s+de\s+emisi[oó]n(?:\s+de)?\s+factura|fecha\s+emisi[oó]n|n[úu]mero\s+de\s+factura|n[º°o\.]?\s*factura|factura)\s*[:\-]?\s*/i, '');
+    raw = raw.replace(/^(?:de\s+factura)\s*[:\-]?\s*/i, '');
+    raw = raw.trim();
+
+    return raw || 'S/N';
+}
+
 function getLegacyInvoiceStorageKey(inv = {}) {
     return [
         String(inv.invoiceNum || 'S/N').trim(),
@@ -1133,6 +1145,7 @@ function shouldBackfillResidualTolls(inv, residualTolls = []) {
 function sanitizeInvoiceForStorage(inv) {
     if (!inv || typeof inv !== 'object') return inv;
     const clone = { ...inv };
+    clone.invoiceNum = normalizeInvoiceLabel(clone.invoiceNum || 'S/N');
     clone.fileName = String(clone.fileName || clone.invoiceNum || 'factura.pdf').trim();
     // invoicePreviewPages (JPEG comprimidas) + invoicePreview se conservan en localStorage
     // para poder mostrar todas las páginas tras refresco sin descargar el PDF
@@ -1231,6 +1244,7 @@ async function processFiles(files) {
             }
 
             console.log(`[Result] Datos extraídos:`, auditData);
+            auditData.invoiceNum = normalizeInvoiceLabel(auditData.invoiceNum || 'S/N');
             auditData.fileName = String(auditData.fileName || file.name || auditData.invoiceNum || 'factura.pdf').trim();
 
             // Detección estricta de duplicado por claves de factura (invoiceNum + cups + periodo / fileName)
@@ -3306,7 +3320,7 @@ function computeComparisonMetrics(compareInvoices, comm) {
         newTotalInvoiceSim += simulatedTotal;
 
         invoiceRows.push({
-            invoiceNum: inv.invoiceNum || 'S/N',
+            invoiceNum: normalizeInvoiceLabel(inv.invoiceNum || 'S/N'),
             cups: inv.cups || 'N/D',
             supplyAddress: inv.supplyAddress || 'N/D',
             period: inv.period || 'N/D',
@@ -3531,7 +3545,7 @@ function buildInvoiceTransparencySimulation(inv, comm) {
     const newTotal = newSubtotalConIee + newTaxAmount;
 
     return {
-        invoiceNum: inv.invoiceNum || 'S/N',
+        invoiceNum: normalizeInvoiceLabel(inv.invoiceNum || 'S/N'),
         clientName: inv.clientName || 'N/D',
         currentCommercializer: inv.comercializadora || 'N/D',
         cups: inv.cups || 'N/D',
@@ -4527,7 +4541,7 @@ function openStoredProposalReport(proposalRef) {
         if (!s) {
             return `
                 <div class="card ${idx === 0 ? 'pdf-avoid-break' : 'pdf-break-before'}" style="padding:1rem; margin-bottom:1rem; border:1px solid #dbeafe;">
-                    <h3 style="margin-bottom:0.5rem;">Factura ${e.invoiceNum || 'S/N'}</h3>
+                    <h3 style="margin-bottom:0.5rem;">Factura ${normalizeInvoiceLabel(e.invoiceNum || 'S/N')}</h3>
                     <p style="margin:0; color:#64748b;">No hay snapshot detallado para esta propuesta. Se muestra resumen.</p>
                 </div>
             `;
@@ -4562,7 +4576,7 @@ function openStoredProposalReport(proposalRef) {
         const blockClass = idx === 0 ? 'pdf-avoid-break' : 'pdf-break-before';
         return `
             <div class="card ${blockClass}" style="padding:1rem; margin-bottom:1rem; border:1px solid #dbeafe;">
-                <h3 style="margin-bottom:0.5rem;">Factura ${e.invoiceNum || 'S/N'}</h3>
+                <h3 style="margin-bottom:0.5rem;">Factura ${normalizeInvoiceLabel(e.invoiceNum || 'S/N')}</h3>
                 <p style="margin:0 0 0.65rem; color:#334155;"><strong>Cliente:</strong> ${e.clientName || 'N/D'} | <strong>Suministro:</strong> ${getShortSupplyAddress(e.supplyAddress || 'N/D')}<br><strong>Tarifa:</strong> ${e.tariffType || 'N/D'} | <strong>CUPS:</strong> ${e.cups || 'N/D'}</p>
 
                 <h4 style="margin:0.75rem 0 0.5rem;">1) Energia por periodos</h4>
@@ -4621,7 +4635,7 @@ function openStoredProposalReport(proposalRef) {
 
     const rows = entries.map(e => `
         <tr>
-            <td>${e.invoiceNum || 'S/N'}</td>
+            <td>${normalizeInvoiceLabel(e.invoiceNum || 'S/N')}</td>
             <td>${e.cups || 'N/D'}</td>
             <td>${getShortSupplyAddress(e.supplyAddress || 'N/D')}</td>
             <td>${formatCurrency(e.oldTotal || 0)}</td>
