@@ -44,6 +44,7 @@ const MAX_PDF_SIZE_MB = 15;
 const INVOICE_FILES_DB_NAME = 'audit_pro_invoice_files';
 const INVOICE_FILES_STORE_NAME = 'files';
 const PDF_BUCKET_CANDIDATES = ['invoice-pdfs', 'Invoices-PDF', 'invoices-pdf'];
+const STABLE_PRODUCTION_URL = 'https://audit-pro-ece.vercel.app';
 
 // Mapa para mantener los objetos File en memoria para el visor de PDF
 window.pendingPdfFiles = new Map();
@@ -121,6 +122,59 @@ function getPendingPdfFromMemory(inv = {}) {
         if (direct) return direct;
     }
     return null;
+}
+
+function getStableDeploymentUrlWithCurrentPath() {
+    const stable = new URL(STABLE_PRODUCTION_URL);
+    const path = String(window.location?.pathname || '/');
+    const search = String(window.location?.search || '');
+    stable.pathname = path;
+    stable.search = search;
+    return stable.toString();
+}
+
+function showStableDeploymentBannerIfNeeded() {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+
+    const stableHost = new URL(STABLE_PRODUCTION_URL).hostname;
+    const currentHost = String(window.location?.hostname || '').toLowerCase();
+    const isVercelPreview = currentHost.endsWith('.vercel.app') && currentHost !== stableHost;
+    if (!isVercelPreview) return;
+
+    const dismissKey = 'audit_pro_preview_banner_dismiss_host';
+    if (localStorage.getItem(dismissKey) === currentHost) return;
+    if (document.getElementById('stable-deployment-banner')) return;
+
+    const stableUrl = getStableDeploymentUrlWithCurrentPath();
+    const banner = document.createElement('div');
+    banner.id = 'stable-deployment-banner';
+    banner.style.cssText = 'position:fixed; top:0; left:0; right:0; z-index:9999; background:#0f172a; color:#f8fafc; border-bottom:1px solid #334155; padding:0.6rem 0.8rem; display:flex; align-items:center; justify-content:space-between; gap:0.75rem;';
+    banner.innerHTML = `
+        <div style="font-size:0.9rem;">Estas en un deployment preview. Para ver siempre la ultima version estable, abre: <strong>${STABLE_PRODUCTION_URL}</strong></div>
+        <div style="display:flex; gap:0.5rem; flex-shrink:0;">
+            <button id="open-stable-deploy-btn" style="background:#22c55e; color:#052e16; border:none; border-radius:6px; padding:0.42rem 0.65rem; font-weight:700; cursor:pointer;">Abrir estable</button>
+            <button id="dismiss-stable-deploy-btn" style="background:#334155; color:#f8fafc; border:none; border-radius:6px; padding:0.42rem 0.65rem; cursor:pointer;">Ocultar</button>
+        </div>
+    `;
+
+    document.body.prepend(banner);
+    document.body.style.paddingTop = '58px';
+
+    const openBtn = document.getElementById('open-stable-deploy-btn');
+    if (openBtn) {
+        openBtn.onclick = () => {
+            window.location.href = stableUrl;
+        };
+    }
+
+    const dismissBtn = document.getElementById('dismiss-stable-deploy-btn');
+    if (dismissBtn) {
+        dismissBtn.onclick = () => {
+            localStorage.setItem(dismissKey, currentHost);
+            banner.remove();
+            document.body.style.paddingTop = '';
+        };
+    }
 }
 
 function openInvoiceFilesDb() {
@@ -5150,6 +5204,7 @@ function closeClientSupplyInvoiceModal() {
 // 10. INICIALIZACIÓN Y EVENTOS
 // ========================================================================
 document.addEventListener('DOMContentLoaded', () => {
+    showStableDeploymentBannerIfNeeded();
     initApp();
 
     // Botones de navegación
