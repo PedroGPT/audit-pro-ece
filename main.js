@@ -2039,24 +2039,41 @@ async function cloudLoadPdf(inv) {
     }
 
     // Fallback: buscar un nombre similar en el bucket (facturas antiguas o guardadas con otro alias)
+    // recorriendo por paginas para no perder coincidencias cuando hay muchos archivos.
     for (const bucket of PDF_BUCKET_CANDIDATES) {
         try {
-            const { data: files, error: listError } = await supabaseClient.storage
-                .from(bucket)
-                .list('', { limit: 200, offset: 0, sortBy: { column: 'name', order: 'asc' } });
-            if (listError) throw listError;
+            const limit = 100;
+            let offset = 0;
+            let foundBestName = '';
 
-            const bestName = pickBestCloudPdfName(files || [], inv, fileNames);
-            if (!bestName) continue;
+            while (true) {
+                const { data: files, error: listError } = await supabaseClient.storage
+                    .from(bucket)
+                    .list('', { limit, offset, sortBy: { column: 'name', order: 'asc' } });
+                if (listError) throw listError;
+
+                if (!files || files.length === 0) break;
+
+                const bestName = pickBestCloudPdfName(files || [], inv, fileNames);
+                if (bestName) {
+                    foundBestName = bestName;
+                    break;
+                }
+
+                if (files.length < limit) break;
+                offset += limit;
+            }
+
+            if (!foundBestName) continue;
 
             const { data, error } = await supabaseClient.storage
                 .from(bucket)
-                .download(bestName);
+                .download(foundBestName);
             if (error) throw error;
             if (data) {
-                const file = new File([data], bestName, { type: 'application/pdf' });
+                const file = new File([data], foundBestName, { type: 'application/pdf' });
                 cachePendingPdf(inv, file);
-                console.log("[CloudPDF] Descargado por fallback:", bestName, "bucket:", bucket);
+                console.log("[CloudPDF] Descargado por fallback:", foundBestName, "bucket:", bucket);
                 return file;
             }
         } catch (e) {
