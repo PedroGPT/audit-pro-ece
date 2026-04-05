@@ -4244,36 +4244,68 @@ async function downloadComparisonTransparencyPdf() {
             y += lines.length * fontSize * 0.3528 * lineGap + afterGap;
         };
 
+        let titleX = margin;
         if (String(logoSrc || '').startsWith('data:image')) {
             try {
                 const logoType = logoSrc.includes('image/jpeg') ? 'JPEG' : 'PNG';
                 doc.addImage(logoSrc, logoType, margin, y, 35, 13);
+                titleX = margin + 39;
             } catch (logoErr) {
                 console.warn('[PDF] No se pudo insertar logo en PDF vectorial:', logoErr);
             }
         }
 
-        writeLineBlock('Comparativa de Precios', { fontSize: 18, bold: true, color: [15, 23, 42], afterGap: 1.5 });
-        writeLineBlock(`Cliente: ${clientName}`, { fontSize: 10, color: [51, 65, 85], afterGap: 4 });
-        y += 2;
+        const titleY = y + 6;
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(18);
+        doc.setTextColor(15, 23, 42);
+        doc.text('Comparativa de Precios', titleX, titleY);
+        y += 15;
 
-        const cards = Array.from(tempContainer.querySelectorAll('.card'));
+        writeLineBlock(`Cliente: ${clientName}`, { fontSize: 10, color: [51, 65, 85], afterGap: 3.5 });
+
+        const coverSummaryLines = Array.from(tempContainer.querySelectorAll('.card p'))
+            .map((p) => String(p.textContent || '').trim())
+            .filter(Boolean)
+            .slice(0, 2);
+        coverSummaryLines.forEach((line) => {
+            writeLineBlock(line, { fontSize: 9.2, color: [51, 65, 85], afterGap: 1.6 });
+        });
+        y += 1;
+
         const tables = Array.from(tempContainer.querySelectorAll('table'));
 
-        cards.forEach((card) => {
-            const cardTitle = card.querySelector('h1, h2, h3, h4');
-            if (cardTitle) {
-                writeLineBlock(cardTitle.textContent, { fontSize: 12, bold: true, color: [30, 41, 59], afterGap: 2 });
+        const findTableTitle = (tableEl) => {
+            let node = tableEl.previousElementSibling;
+            while (node) {
+                if (/^H[1-4]$/.test(node.tagName)) return String(node.textContent || '').trim();
+                const innerHeading = node.querySelector?.('h1, h2, h3, h4');
+                if (innerHeading) return String(innerHeading.textContent || '').trim();
+                node = node.previousElementSibling;
             }
-
-            const cardParagraphs = Array.from(card.querySelectorAll('p')).filter((p) => !p.closest('table'));
-            cardParagraphs.forEach((p) => {
-                writeLineBlock(p.textContent, { fontSize: 9, color: [51, 65, 85], afterGap: 1.8 });
-            });
-        });
+            const parentHeading = tableEl.closest('.card')?.querySelector('h1, h2, h3, h4');
+            return parentHeading ? String(parentHeading.textContent || '').trim() : '';
+        };
 
         if (typeof doc.autoTable === 'function') {
             tables.forEach((tableEl, idx) => {
+                const sectionTitle = findTableTitle(tableEl);
+                if (sectionTitle) {
+                    writeLineBlock(sectionTitle, { fontSize: 11, bold: true, color: [30, 41, 59], afterGap: 1.6 });
+                }
+
+                const headers = Array.from(tableEl.querySelectorAll('thead th')).map((th) => String(th.textContent || '').trim().toLowerCase());
+                const columnStyles = {};
+                headers.forEach((label, colIdx) => {
+                    if (label.includes('factura')) columnStyles[colIdx] = { cellWidth: 24 };
+                    else if (label.includes('suministro')) columnStyles[colIdx] = { cellWidth: 30 };
+                    else if (label.includes('cups')) columnStyles[colIdx] = { cellWidth: 30 };
+                    else if (label.includes('periodo')) columnStyles[colIdx] = { cellWidth: 18 };
+                    else if (label.includes('tarifa')) columnStyles[colIdx] = { cellWidth: 10 };
+                    else if (label.includes('comercializadora')) columnStyles[colIdx] = { cellWidth: 24 };
+                    else if (label.includes('total') || label.includes('ahorro') || label.includes('importe')) columnStyles[colIdx] = { cellWidth: 14, halign: 'right' };
+                });
+
                 ensureSpace(14);
                 doc.autoTable({
                     html: tableEl,
@@ -4281,10 +4313,11 @@ async function downloadComparisonTransparencyPdf() {
                     margin: { left: margin, right: margin },
                     tableWidth: 'auto',
                     theme: 'grid',
+                    columnStyles,
                     styles: {
                         font: 'helvetica',
-                        fontSize: 8,
-                        cellPadding: 1.4,
+                        fontSize: 7.3,
+                        cellPadding: 1.1,
                         textColor: [15, 23, 42],
                         lineColor: [219, 227, 239],
                         lineWidth: 0.1,
@@ -4295,6 +4328,9 @@ async function downloadComparisonTransparencyPdf() {
                         fillColor: [248, 250, 252],
                         textColor: [15, 23, 42],
                         fontStyle: 'bold'
+                    },
+                    alternateRowStyles: {
+                        fillColor: [252, 253, 255]
                     },
                     rowPageBreak: 'avoid'
                 });
