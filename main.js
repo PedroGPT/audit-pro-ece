@@ -4183,8 +4183,22 @@ async function downloadComparisonTransparencyPdf() {
         return;
     }
 
-    const clientNameMatch = String(source.innerHTML || '').match(/<strong>Cliente:<\/strong>\s*([^<\n]+)/i);
-    const clientName = (clientNameMatch ? clientNameMatch[1] : '').trim() || 'cliente';
+    const extractClientName = () => {
+        const html = String(source.innerHTML || '');
+        const text = String(source.textContent || '').replace(/\s+/g, ' ').trim();
+        const htmlMatch = html.match(/<strong>\s*Cliente:\s*<\/strong>\s*([^<\|\n]+)/i);
+        if (htmlMatch && String(htmlMatch[1] || '').trim()) return String(htmlMatch[1]).trim();
+
+        const textMatch = text.match(/Cliente:\s*([^\|\n]+)/i);
+        if (textMatch && String(textMatch[1] || '').trim()) return String(textMatch[1]).trim();
+
+        const firstSimClient = text.match(/Comparativa de Precios\s+([^\|\n]{3,80})/i);
+        if (firstSimClient && String(firstSimClient[1] || '').trim()) return String(firstSimClient[1]).trim();
+
+        return 'N/D';
+    };
+
+    const clientName = extractClientName();
     const safeClientName = clientName
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')
@@ -4207,6 +4221,23 @@ async function downloadComparisonTransparencyPdf() {
     tempContainer.style.background = '#ffffff';
     tempContainer.innerHTML = normalizedHtml;
     document.body.appendChild(tempContainer);
+
+    // Simplificar direcciones en columnas de suministro para mejorar lectura del informe.
+    const tablesForCleanup = Array.from(tempContainer.querySelectorAll('table'));
+    tablesForCleanup.forEach((tableEl) => {
+        const headers = Array.from(tableEl.querySelectorAll('thead th')).map(th => String(th.textContent || '').trim().toLowerCase());
+        const suministroIdx = headers.findIndex(h => h.includes('suministro'));
+        if (suministroIdx < 0) return;
+
+        const bodyRows = Array.from(tableEl.querySelectorAll('tbody tr'));
+        bodyRows.forEach((row) => {
+            const cells = row.querySelectorAll('td');
+            if (!cells || !cells[suministroIdx]) return;
+            const current = String(cells[suministroIdx].textContent || '').trim();
+            if (!current) return;
+            cells[suministroIdx].textContent = getShortSupplyAddress(current, 44);
+        });
+    });
 
     try {
         const { jsPDF } = window.jspdf;
@@ -4248,19 +4279,19 @@ async function downloadComparisonTransparencyPdf() {
         if (String(logoSrc || '').startsWith('data:image')) {
             try {
                 const logoType = logoSrc.includes('image/jpeg') ? 'JPEG' : 'PNG';
-                doc.addImage(logoSrc, logoType, margin, y, 35, 13);
-                titleX = margin + 39;
+                doc.addImage(logoSrc, logoType, margin, y, 42, 15);
+                titleX = margin + 46;
             } catch (logoErr) {
                 console.warn('[PDF] No se pudo insertar logo en PDF vectorial:', logoErr);
             }
         }
 
-        const titleY = y + 6;
+        const titleY = y + 7;
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(18);
         doc.setTextColor(15, 23, 42);
         doc.text('Comparativa de Precios', titleX, titleY);
-        y += 15;
+        y += 18;
 
         writeLineBlock(`Cliente: ${clientName}`, { fontSize: 10, color: [51, 65, 85], afterGap: 3.5 });
 
@@ -4287,12 +4318,27 @@ async function downloadComparisonTransparencyPdf() {
             return parentHeading ? String(parentHeading.textContent || '').trim() : '';
         };
 
+        const inferTableTitle = (tableEl) => {
+            const headers = Array.from(tableEl.querySelectorAll('thead th')).map(th => String(th.textContent || '').trim().toLowerCase());
+            if (headers.some(h => h.includes('comercializadora propuesta')) && headers.some(h => h.includes('factura'))) {
+                return 'Suministros implicados';
+            }
+            if (headers.some(h => h.includes('consumo')) && headers.some(h => h.includes('energia antes'))) {
+                return 'Detalle de energia por periodos';
+            }
+            if (headers.some(h => h.includes('potencia')) && headers.some(h => h.includes('dias'))) {
+                return 'Detalle de potencia por periodos';
+            }
+            if (headers.some(h => h.includes('concepto')) && headers.some(h => h.includes('diferencia'))) {
+                return 'Resumen economico comparado';
+            }
+            return 'Tabla de resultados';
+        };
+
         if (typeof doc.autoTable === 'function') {
             tables.forEach((tableEl, idx) => {
-                const sectionTitle = findTableTitle(tableEl);
-                if (sectionTitle) {
-                    writeLineBlock(sectionTitle, { fontSize: 11, bold: true, color: [30, 41, 59], afterGap: 1.6 });
-                }
+                const sectionTitle = findTableTitle(tableEl) || inferTableTitle(tableEl);
+                writeLineBlock(`Tabla ${idx + 1}: ${sectionTitle}`, { fontSize: 11, bold: true, color: [30, 41, 59], afterGap: 1.6 });
 
                 const headers = Array.from(tableEl.querySelectorAll('thead th')).map((th) => String(th.textContent || '').trim().toLowerCase());
                 const columnStyles = {};
@@ -4311,7 +4357,7 @@ async function downloadComparisonTransparencyPdf() {
                     html: tableEl,
                     startY: y,
                     margin: { left: margin, right: margin },
-                    tableWidth: 'auto',
+                    tableWidth: contentWidth,
                     theme: 'grid',
                     columnStyles,
                     styles: {
@@ -4329,10 +4375,11 @@ async function downloadComparisonTransparencyPdf() {
                         textColor: [15, 23, 42],
                         fontStyle: 'bold'
                     },
+                    showHead: 'everyPage',
                     alternateRowStyles: {
                         fillColor: [252, 253, 255]
                     },
-                    rowPageBreak: 'avoid'
+                    rowPageBreak: 'auto'
                 });
                 y = (doc.lastAutoTable?.finalY || y) + 4;
                 if (idx < tables.length - 1) ensureSpace(8);
