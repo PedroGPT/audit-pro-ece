@@ -4178,11 +4178,6 @@ async function downloadComparisonTransparencyPdf() {
         return;
     }
 
-    if (!window.jspdf || typeof window.jspdf.jsPDF !== 'function') {
-        alert('No se ha podido cargar el motor PDF profesional. Recarga la pagina e intenta de nuevo.');
-        return;
-    }
-
     const extractClientName = () => {
         const html = String(source.innerHTML || '');
         const text = String(source.textContent || '').replace(/\s+/g, ' ').trim();
@@ -4191,9 +4186,6 @@ async function downloadComparisonTransparencyPdf() {
 
         const textMatch = text.match(/Cliente:\s*([^\|\n]+)/i);
         if (textMatch && String(textMatch[1] || '').trim()) return String(textMatch[1]).trim();
-
-        const firstSimClient = text.match(/Comparativa de Precios\s+([^\|\n]{3,80})/i);
-        if (firstSimClient && String(firstSimClient[1] || '').trim()) return String(firstSimClient[1]).trim();
 
         return 'N/D';
     };
@@ -4217,181 +4209,75 @@ async function downloadComparisonTransparencyPdf() {
     tempContainer.style.position = 'fixed';
     tempContainer.style.left = '-20000px';
     tempContainer.style.top = '0';
-    tempContainer.style.width = '1100px';
+    tempContainer.style.width = '1200px';
     tempContainer.style.background = '#ffffff';
     tempContainer.innerHTML = normalizedHtml;
-    document.body.appendChild(tempContainer);
 
-    // Simplificar direcciones en columnas de suministro para mejorar lectura del informe.
     const tablesForCleanup = Array.from(tempContainer.querySelectorAll('table'));
     tablesForCleanup.forEach((tableEl) => {
         const headers = Array.from(tableEl.querySelectorAll('thead th')).map(th => String(th.textContent || '').trim().toLowerCase());
         const suministroIdx = headers.findIndex(h => h.includes('suministro'));
         if (suministroIdx < 0) return;
-
         const bodyRows = Array.from(tableEl.querySelectorAll('tbody tr'));
         bodyRows.forEach((row) => {
             const cells = row.querySelectorAll('td');
             if (!cells || !cells[suministroIdx]) return;
             const current = String(cells[suministroIdx].textContent || '').trim();
             if (!current) return;
-            cells[suministroIdx].textContent = getShortSupplyAddress(current, 44);
+            cells[suministroIdx].textContent = getShortSupplyAddress(current, 46);
         });
     });
 
+    const pdfHtml = `<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        ${getComparisonReportExportStyles({ forPrint: true })}
+        body { background: #ffffff; padding: 0; margin: 0; }
+        .report-wrap { width: 190mm; max-width: 190mm; margin: 0 auto; }
+        .card { box-shadow: none !important; }
+        .modal-table { page-break-inside: auto; break-inside: auto; }
+        .modal-table thead { display: table-header-group; }
+        .modal-table tr { page-break-inside: avoid; break-inside: avoid; }
+    </style>
+</head>
+<body>
+    <div class="report-wrap">${tempContainer.innerHTML}</div>
+</body>
+</html>`;
+
     try {
-        const { jsPDF } = window.jspdf;
-        const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
-        const pageWidth = doc.internal.pageSize.getWidth();
-        const pageHeight = doc.internal.pageSize.getHeight();
-        const margin = 10;
-        const contentWidth = pageWidth - margin * 2;
-        let y = margin;
-
-        const ensureSpace = (needed = 8) => {
-            if (y + needed > pageHeight - margin) {
-                doc.addPage();
-                y = margin;
-            }
-        };
-
-        const writeLineBlock = (text, opts = {}) => {
-            const content = String(text || '').trim();
-            if (!content) return;
-            const fontSize = Number(opts.fontSize || 10);
-            const lineGap = Number(opts.lineGap || 1.15);
-            const afterGap = Number(opts.afterGap || 2.5);
-            const color = opts.color || [15, 23, 42];
-            const fontStyle = opts.bold ? 'bold' : 'normal';
-
-            doc.setFont('helvetica', fontStyle);
-            doc.setFontSize(fontSize);
-            doc.setTextColor(color[0], color[1], color[2]);
-
-            const lines = doc.splitTextToSize(content, contentWidth);
-            const blockHeight = lines.length * fontSize * 0.3528 * lineGap + afterGap;
-            ensureSpace(blockHeight);
-            doc.text(lines, margin, y);
-            y += lines.length * fontSize * 0.3528 * lineGap + afterGap;
-        };
-
-        let titleX = margin;
-        if (String(logoSrc || '').startsWith('data:image')) {
-            try {
-                const logoType = logoSrc.includes('image/jpeg') ? 'JPEG' : 'PNG';
-                doc.addImage(logoSrc, logoType, margin, y, 42, 15);
-                titleX = margin + 46;
-            } catch (logoErr) {
-                console.warn('[PDF] No se pudo insertar logo en PDF vectorial:', logoErr);
-            }
-        }
-
-        const titleY = y + 7;
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(18);
-        doc.setTextColor(15, 23, 42);
-        doc.text('Comparativa de Precios', titleX, titleY);
-        y += 18;
-
-        writeLineBlock(`Cliente: ${clientName}`, { fontSize: 10, color: [51, 65, 85], afterGap: 3.5 });
-
-        const coverSummaryLines = Array.from(tempContainer.querySelectorAll('.card p'))
-            .map((p) => String(p.textContent || '').trim())
-            .filter(Boolean)
-            .slice(0, 2);
-        coverSummaryLines.forEach((line) => {
-            writeLineBlock(line, { fontSize: 9.2, color: [51, 65, 85], afterGap: 1.6 });
+        const response = await fetch('/api/export-comparison-pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ html: pdfHtml })
         });
-        y += 1;
 
-        const tables = Array.from(tempContainer.querySelectorAll('table'));
-
-        const findTableTitle = (tableEl) => {
-            let node = tableEl.previousElementSibling;
-            while (node) {
-                if (/^H[1-4]$/.test(node.tagName)) return String(node.textContent || '').trim();
-                const innerHeading = node.querySelector?.('h1, h2, h3, h4');
-                if (innerHeading) return String(innerHeading.textContent || '').trim();
-                node = node.previousElementSibling;
+        if (!response.ok) {
+            let details = '';
+            try {
+                const err = await response.json();
+                details = err?.details || err?.error || '';
+            } catch {
+                details = await response.text();
             }
-            const parentHeading = tableEl.closest('.card')?.querySelector('h1, h2, h3, h4');
-            return parentHeading ? String(parentHeading.textContent || '').trim() : '';
-        };
-
-        const inferTableTitle = (tableEl) => {
-            const headers = Array.from(tableEl.querySelectorAll('thead th')).map(th => String(th.textContent || '').trim().toLowerCase());
-            if (headers.some(h => h.includes('comercializadora propuesta')) && headers.some(h => h.includes('factura'))) {
-                return 'Suministros implicados';
-            }
-            if (headers.some(h => h.includes('consumo')) && headers.some(h => h.includes('energia antes'))) {
-                return 'Detalle de energia por periodos';
-            }
-            if (headers.some(h => h.includes('potencia')) && headers.some(h => h.includes('dias'))) {
-                return 'Detalle de potencia por periodos';
-            }
-            if (headers.some(h => h.includes('concepto')) && headers.some(h => h.includes('diferencia'))) {
-                return 'Resumen economico comparado';
-            }
-            return 'Tabla de resultados';
-        };
-
-        if (typeof doc.autoTable === 'function') {
-            tables.forEach((tableEl, idx) => {
-                const sectionTitle = findTableTitle(tableEl) || inferTableTitle(tableEl);
-                writeLineBlock(`Tabla ${idx + 1}: ${sectionTitle}`, { fontSize: 11, bold: true, color: [30, 41, 59], afterGap: 1.6 });
-
-                const headers = Array.from(tableEl.querySelectorAll('thead th')).map((th) => String(th.textContent || '').trim().toLowerCase());
-                const columnStyles = {};
-                headers.forEach((label, colIdx) => {
-                    if (label.includes('factura')) columnStyles[colIdx] = { cellWidth: 24 };
-                    else if (label.includes('suministro')) columnStyles[colIdx] = { cellWidth: 30 };
-                    else if (label.includes('cups')) columnStyles[colIdx] = { cellWidth: 30 };
-                    else if (label.includes('periodo')) columnStyles[colIdx] = { cellWidth: 18 };
-                    else if (label.includes('tarifa')) columnStyles[colIdx] = { cellWidth: 10 };
-                    else if (label.includes('comercializadora')) columnStyles[colIdx] = { cellWidth: 24 };
-                    else if (label.includes('total') || label.includes('ahorro') || label.includes('importe')) columnStyles[colIdx] = { cellWidth: 14, halign: 'right' };
-                });
-
-                ensureSpace(14);
-                doc.autoTable({
-                    html: tableEl,
-                    startY: y,
-                    margin: { left: margin, right: margin },
-                    tableWidth: contentWidth,
-                    theme: 'grid',
-                    columnStyles,
-                    styles: {
-                        font: 'helvetica',
-                        fontSize: 7.3,
-                        cellPadding: 1.1,
-                        textColor: [15, 23, 42],
-                        lineColor: [219, 227, 239],
-                        lineWidth: 0.1,
-                        overflow: 'linebreak',
-                        valign: 'top'
-                    },
-                    headStyles: {
-                        fillColor: [248, 250, 252],
-                        textColor: [15, 23, 42],
-                        fontStyle: 'bold'
-                    },
-                    showHead: 'everyPage',
-                    alternateRowStyles: {
-                        fillColor: [252, 253, 255]
-                    },
-                    rowPageBreak: 'auto'
-                });
-                y = (doc.lastAutoTable?.finalY || y) + 4;
-                if (idx < tables.length - 1) ensureSpace(8);
-            });
+            throw new Error(details || `HTTP ${response.status}`);
         }
 
-        doc.save(filename);
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     } catch (err) {
         console.error('[PDF] Error exportando comparativa de precios:', err);
-        alert('No se pudo generar el PDF. Revisa consola y vuelve a intentarlo.');
-    } finally {
-        if (tempContainer.parentNode) tempContainer.parentNode.removeChild(tempContainer);
+        alert(`No se pudo generar el PDF profesional. ${err.message || ''}`.trim());
     }
 }
 
