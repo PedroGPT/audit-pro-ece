@@ -1814,6 +1814,49 @@ async function clearCloudHistory() {
     }
 }
 
+async function cloudDeleteInvoice(inv) {
+    if (!supabaseClient || !inv) return { ok: true, skipped: true, message: 'Sin cliente Supabase o factura' };
+
+    try {
+        const fileName = String(inv.fileName || '').trim();
+        const invoiceNum = String(inv.invoiceNum || '').trim();
+        const cups = String(inv.cups || '').trim();
+        const period = String(inv.period || '').trim();
+
+        if (fileName) {
+            const { error } = await supabaseClient
+                .from('invoices')
+                .delete()
+                .eq('file_name', fileName);
+            if (error) throw error;
+        }
+
+        if (invoiceNum && cups) {
+            let query = supabaseClient
+                .from('invoices')
+                .delete()
+                .eq('invoice_num', invoiceNum)
+                .eq('cups', cups);
+            if (period) query = query.eq('period', period);
+            const { error } = await query;
+            if (error) throw error;
+        }
+
+        const pdfNames = buildPdfCloudNameCandidates(inv);
+        for (const bucket of PDF_BUCKET_CANDIDATES) {
+            if (pdfNames.length === 0) continue;
+            const { error } = await supabaseClient.storage.from(bucket).remove(pdfNames);
+            if (error) {
+                console.warn('[CloudPDF] No se pudo borrar en bucket', bucket, error.message);
+            }
+        }
+
+        return { ok: true, skipped: false, message: 'Factura eliminada en cloud' };
+    } catch (err) {
+        return { ok: false, skipped: false, message: String(err?.message || err || 'Error desconocido') };
+    }
+}
+
 function loadLocalStore() {
     const stored = localStorage.getItem('audit_pro_db');
     if (stored) {
@@ -4268,11 +4311,23 @@ function renderMultipleComparison(invoiceIdx, commercializerIndices) {
 async function deleteHistoryItem(index) {
     if (confirm('¿Estás seguro de que quieres eliminar esta factura del historial?')) {
         const removed = dbInvoices.splice(index, 1)[0];
+        if (!removed) {
+            renderHistory();
+            return;
+        }
+
+        invoices = invoices.filter(inv => !isSameInvoiceRecord(inv, removed));
         await deleteInvoicePdfFromStore(removed);
         localStorage.setItem('audit_pro_db', JSON.stringify(dbInvoices));
+
+        const cloudResult = await cloudDeleteInvoice(removed);
+        if (!cloudResult.ok) {
+            alert(`Factura eliminada localmente, pero NO en cloud. Puede reaparecer al refrescar.\nDetalle: ${cloudResult.message}`);
+        }
+
         renderHistory();
         renderClients();
-        console.log(`[History] Eliminada factura en índice ${index}`);
+        console.log(`[History] Eliminada factura en índice ${index}. Resultado cloud:`, cloudResult);
     }
 }
 
